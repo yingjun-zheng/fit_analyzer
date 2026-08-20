@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+
+# 构建产物
+build/icon.ico
+dist/
+build/骑行FIT数据分析器/
+
+# 本地数据
+data/
+.tmp/
+*.log
+
+# 编辑器
+.idea/
+.vscode/

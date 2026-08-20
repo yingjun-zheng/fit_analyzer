@@ -1,0 +1,7 @@
+# 运行依赖（纯桌面应用）
+PySide6>=6.7
+fitparse>=1.2.0
+
+# 构建 EXE（可选）
+pyinstaller>=6.6
+pillow>=10.0
