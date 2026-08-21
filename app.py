@@ -116,8 +116,13 @@ def _selftest(app, win, args):
         if not cond:
             ok_all = False
 
-    import_dir = Path(args.import_dir) if args.import_dir else Path(r"F:\byciclefits")
-    if import_dir.exists():
+    import_dir = Path(args.import_dir) if args.import_dir else None
+    if import_dir is None:
+        for cand in (Path(r"F:\byciclefits"), Path(r"C:\Users\zhengyingjun\Documents\deepseek\fittestdata")):
+            if cand.exists() and any(cand.glob("*.fit")):
+                import_dir = cand
+                break
+    if import_dir is not None and import_dir.exists():
         files = sorted(import_dir.glob("*.fit"))
         logger.info("自检：导入 %d 个 FIT", len(files))
         results, errors = fit_parser.parse_many(files)

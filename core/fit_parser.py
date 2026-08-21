@@ -4,6 +4,7 @@
 """
 import hashlib
 import logging
+import re
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -12,6 +13,103 @@ import fitparse
 log = logging.getLogger("fit.parser")
 
 SEMICIRCLE = 2**31
+
+# ---- 码表识别：品牌显示名 / 产品码 → 型号 ----
+MANUFACTURER_DISPLAY = {
+    "igpsport": "iGPSPORT",
+    "magene": "Magene（迈金）",
+    "bryton": "Bryton（百锐腾）",
+    "garmin": "Garmin（佳明）",
+    "wahoo_fitness": "Wahoo",
+    "coros": "COROS（高驰）",
+    "xoss": "XOSS（行者）",
+    "sportdevices": "SportDevices",
+    "polar": "Polar（博能）",
+    "sigma": "Sigma（西格玛）",
+    "suunto": "Suunto（颂拓）",
+    "hammerhead": "Hammerhead",
+    "karoo": "Hammerhead",
+    "stages": "Stages",
+    "4iiii": "4iiii",
+    "cycling_computers": "Cycling Computers",
+}
+
+# 产品码 → 型号（无 product_name 时的兜底；部分来源：设备官方导出/社区整理）
+PRODUCT_MODELS = {
+    "igpsport": {
+        100: "IGS100", 200: "IGS200", 300: "IGS300", 301: "IGS301",
+        500: "IGS500", 520: "IGS520", 600: "IGS600", 618: "IGS618",
+        620: "IGS620", 630: "IGS630", 800: "IGS800", 900: "IGS900",
+    },
+    "magene": {
+        302: "C406", 303: "C406 Pro", 307: "C606", 310: "C606 Pro",
+    },
+    "bryton": {
+        1815: "Rider 15", 1816: "Rider 16", 1820: "Rider 20",
+        1833: "Rider 330", 1841: "Rider 410", 1842: "Rider 420",
+        1845: "Rider 450", 1853: "Rider 530", 1854: "Rider 540",
+        1875: "Rider 750", 1886: "Rider 860",
+    },
+}
+
+# product_name 里常见缩写展开
+PRODUCT_NAME_EXPAND = {
+    "C606P": "C606 Pro", "C406P": "C406 Pro", "C506P": "C506 Pro",
+    "C606": "C606", "C406": "C406", "C506": "C506",
+    "IGS200": "IGS200", "IGS300": "IGS300", "IGS620": "IGS620",
+}
+
+
+def _clean_product_name(name):
+    """'C606P_41338' → 'C606P' → 'C606 Pro'；去掉尾部 _数字/-数字 并展开常见缩写。"""
+    if not name:
+        return None
+    s = str(name).strip()
+    s = re.sub(r"[-_]\d+$", "", s).strip()
+    s = re.sub(r"\s+", " ", s)
+    return PRODUCT_NAME_EXPAND.get(s, s) or None
+
+
+def _to_int(v):
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _format_device(manufacturer, product, product_name, overrides=None, hw_version=None, sw_version=None):
+    """组装设备显示名。
+
+    优先级：用户覆盖表（设置里“设备型号表”）> 文件自带 product_name > 内置产品码表 > 兜底。
+    overrides: {"厂商/产品码": "型号名"}。
+    """
+    brand = MANUFACTURER_DISPLAY.get(manufacturer, manufacturer) if manufacturer else "未知设备"
+    if isinstance(brand, int) or (isinstance(brand, str) and brand.isdigit()):
+        brand = f"厂商{manufacturer}"
+    p = _to_int(product)
+    model = None
+    # 1) 用户覆盖表
+    if overrides and p is not None and manufacturer:
+        key = f"{manufacturer}/{p}"
+        v = overrides.get(key)
+        if v is not None and str(v).strip():
+            model = str(v).strip()
+    # 2) 文件自带型号名
+    if not model and product_name:
+        model = _clean_product_name(product_name)
+    # 3) 内置产品码表
+    if not model and p is not None and manufacturer in PRODUCT_MODELS and p in PRODUCT_MODELS[manufacturer]:
+        model = PRODUCT_MODELS[manufacturer][p]
+    if model:
+        return f"{brand} {model}"
+    if p is not None:
+        extra = ""
+        if hw_version is not None:
+            extra += f" 硬件{hw_version}"
+        if sw_version is not None:
+            extra += f" 固件{sw_version}"
+        return f"{brand}（产品码 {p}{extra}）"
+    return brand
 
 
 class FitParseError(Exception):
@@ -69,6 +167,7 @@ def parse_fit_file(path: Path):
     laps = []
     records = []
     activities = []
+    device_infos = []
 
     for msg in messages:
         name = msg.name or ""
@@ -83,6 +182,8 @@ def parse_fit_file(path: Path):
             records.append(f)
         elif name == "activity":
             activities.append(f)
+        elif name == "device_info":
+            device_infos.append(f)
 
     if not sessions and not records:
         raise FitParseError("未找到会话/记录数据（可能不是骑行活动文件）")
@@ -271,6 +372,18 @@ def parse_fit_file(path: Path):
 
     manufacturer = file_id.get("manufacturer")
     product = file_id.get("product")
+    product_name = file_id.get("product_name")
+    # 主机信息：从与 file_id 同厂商的 device_info 里补充固件/硬件版本与型号名
+    hw_version = sw_version = None
+    for di in device_infos:
+        if di.get("manufacturer") and manufacturer and di.get("manufacturer") == manufacturer:
+            if di.get("hardware_version") is not None:
+                hw_version = di.get("hardware_version")
+            if di.get("software_version") is not None:
+                sw_version = di.get("software_version")
+            if not product_name and di.get("product_name"):
+                product_name = di.get("product_name")
+    device = _format_device(manufacturer, product, product_name, hw_version=hw_version, sw_version=sw_version)
 
     # ---- 记圈 ----
     lap_out = []
@@ -312,7 +425,12 @@ def parse_fit_file(path: Path):
     return {
         "file_hash": file_hash,
         "file_name": file_name,
-        "device": f"{manufacturer} {product}".strip(),
+        "device": device,
+        "device_brand": str(manufacturer) if manufacturer else "",
+        "product": _to_int(product),
+        "product_name": str(product_name).strip() if product_name else "",
+        "hw_version": str(hw_version) if hw_version is not None else "",
+        "sw_version": str(sw_version) if sw_version is not None else "",
         "sport": sport,
         "sub_sport": sub_sport,
         "start_time": start_display,

@@ -20,6 +20,8 @@ DEFAULTS = {
     "ai_timeout": 120,
     # ---- 其他 ----
     "track_max_points": 2000,
+    # 设备型号表（用户可扩展）：{"厂商/产品码": "型号名"}，如 {"bryton/1801": "百锐腾 Rider 15"}
+    "device_models": {},
 }
 
 _SENSITIVE = {"ai_api_key"}

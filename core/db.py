@@ -13,6 +13,11 @@ CREATE TABLE IF NOT EXISTS activities (
     file_name TEXT,
     name TEXT,
     device TEXT,
+    device_brand TEXT,
+    product INTEGER,
+    product_name TEXT,
+    hw_version TEXT,
+    sw_version TEXT,
     sport TEXT,
     start_time TEXT,
     start_ts INTEGER,
@@ -64,7 +69,23 @@ class DB:
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA foreign_keys=ON")
         self.conn.executescript(_SCHEMA)
+        self._migrate()
         self.conn.commit()
+
+    def _migrate(self):
+        """旧库补新列（设备识别字段）。"""
+        cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(activities)")}
+        adds = {
+            "device_brand": "TEXT",
+            "product": "INTEGER",
+            "product_name": "TEXT",
+            "hw_version": "TEXT",
+            "sw_version": "TEXT",
+        }
+        for col, typ in adds.items():
+            if col not in cols:
+                self.conn.execute(f"ALTER TABLE activities ADD COLUMN {col} {typ}")
+                log.info("数据库迁移：activities 增加列 %s", col)
 
     def close(self):
         try:
@@ -80,15 +101,19 @@ class DB:
         is_new = existing is None
         self.conn.execute(
             """INSERT INTO activities (
-                file_hash, file_name, name, device, sport, start_time, start_ts,
+                file_hash, file_name, name, device, device_brand, product, product_name, hw_version, sw_version,
+                sport, start_time, start_ts,
                 total_distance_m, timer_s, elapsed_s, moving_s,
                 avg_speed_ms, max_speed_ms, avg_hr, max_hr, min_hr,
                 avg_cad, max_cad, calories, ascent_m, descent_m,
                 avg_alt_m, max_alt_m, min_alt_m, avg_temp, max_temp, min_temp,
                 lat, lon, record_count, imported_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(file_hash) DO UPDATE SET
                 file_name=excluded.file_name, name=excluded.name,
+                device=excluded.device, device_brand=excluded.device_brand,
+                product=excluded.product, product_name=excluded.product_name,
+                hw_version=excluded.hw_version, sw_version=excluded.sw_version,
                 start_time=excluded.start_time, start_ts=excluded.start_ts,
                 total_distance_m=excluded.total_distance_m, timer_s=excluded.timer_s,
                 avg_speed_ms=excluded.avg_speed_ms, max_speed_ms=excluded.max_speed_ms,
@@ -99,6 +124,8 @@ class DB:
             """,
             (
                 data["file_hash"], data["file_name"], data["name"], data["device"],
+                data.get("device_brand", ""), data.get("product"), data.get("product_name", ""),
+                data.get("hw_version", ""), data.get("sw_version", ""),
                 data["sport"], data["start_time"], data["start_ts"],
                 s["total_distance_m"], s["timer_s"], s["elapsed_s"], s["moving_s"],
                 s["avg_speed_ms"], s["max_speed_ms"], s["avg_hr"], s["max_hr"], s["min_hr"],
@@ -134,6 +161,26 @@ class DB:
         )
         self.conn.commit()
         return aid, is_new
+
+    def reidentify_devices(self, formatter):
+        """按当前设备型号表重算所有活动的 device 显示名。
+        formatter(device_brand, product, product_name, hw_version, sw_version) -> str"""
+        rows = self.conn.execute(
+            "SELECT id, device_brand, product, product_name, hw_version, sw_version FROM activities"
+        ).fetchall()
+        n = 0
+        for r in rows:
+            try:
+                new_dev = formatter(r["device_brand"], r["product"], r["product_name"],
+                                    r["hw_version"], r["sw_version"])
+            except Exception:
+                continue
+            if new_dev:
+                self.conn.execute("UPDATE activities SET device=? WHERE id=?", (new_dev, r["id"]))
+                n += 1
+        self.conn.commit()
+        log.info("重新识别设备：更新 %d 条", n)
+        return n
 
     # ---------------- 查询 ----------------
     def months(self):

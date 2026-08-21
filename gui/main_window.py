@@ -165,6 +165,21 @@ class MainWindow(QMainWindow):
         self.month_tree.itemClicked.connect(self.on_tree_click)
         self.month_tree.setMinimumWidth(260)
         self.month_tree.setMaximumWidth(340)
+        # 多选（Ctrl/Shift+点击）+ 右键菜单（单选/批量/清空）
+        from PySide6.QtWidgets import QAbstractItemView
+
+        self.month_tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.month_tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.month_tree.customContextMenuRequested.connect(self._on_tree_context_menu)
+
+        # 删除选中（批量）
+        act_delete = QAction("🗑 删除选中", self)
+        act_delete.triggered.connect(self.delete_selected)
+        tb.addAction(act_delete)
+        # 重新识别设备（设置里改了设备型号表后点这个）
+        act_reid = QAction("🔄 重新识别设备", self)
+        act_reid.triggered.connect(self.reidentify_devices)
+        tb.addAction(act_reid)
 
         self.stack = QStackedWidget()
         self.month_page = self._build_month_page()
@@ -187,6 +202,19 @@ class MainWindow(QMainWindow):
         f.setLayout(QVBoxLayout())
         f.layout().setContentsMargins(10, 10, 10, 10)
         return f
+
+    def _chart_block(self, view, width):
+        """把一张图包进独立的横向滚动区：图太宽时该图自带横向滚动条，其他图不受影响。"""
+        card = self._card()
+        card.setFixedWidth(max(width, 400))
+        card.layout().addWidget(view)
+        sc = QScrollArea()
+        sc.setWidgetResizable(False)
+        sc.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        sc.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        sc.setMinimumWidth(120)  # 不把外层页面撑宽
+        sc.setWidget(card)
+        return sc
 
     def _stat_card(self, key, value):
         f = QFrame()
@@ -293,10 +321,10 @@ class MainWindow(QMainWindow):
 
     def _build_activity_page(self):
         tabs = QTabWidget()
-        # 概览：统计卡 + 图表（保持自然宽度；窗口窄时出现横向滚动条，内容不压缩）
+        # 概览：统计卡 + 图表（每张图自带横向滚动条，页面本身不做横向扩展）
         self.ov_scroll = QScrollArea()
         self.ov_container = QWidget()
-        self.ov_container.setMinimumWidth(1150)  # 内容自然宽度 → 窄窗口出横向滚动条
+        self.ov_container.setMinimumWidth(600)
         self.ov_lay = QVBoxLayout(self.ov_container)
         self.ov_lay.setContentsMargins(12, 12, 12, 12)
         self.ov_lay.setSpacing(10)
@@ -314,7 +342,7 @@ class MainWindow(QMainWindow):
         # 区间统计
         self.zs_scroll = QScrollArea()
         self.zs_container = QWidget()
-        self.zs_container.setMinimumWidth(900)  # 窄窗口出横向滚动条
+        self.zs_container.setMinimumWidth(600)
         self.zs_lay = QVBoxLayout(self.zs_container)
         self.zs_lay.setContentsMargins(12, 12, 12, 12)
         self.zs_lay.setSpacing(10)
@@ -441,6 +469,86 @@ class MainWindow(QMainWindow):
         elif kind == ACTIVITY:
             self.show_activity(data)
 
+    # ---------------- 删除数据（单选 / 批量 / 清空） ----------------
+    def _selected_activity_ids(self):
+        ids = []
+        for item in self.month_tree.selectedItems():
+            kind, data = item.data(0, Qt.UserRole)
+            if kind == ACTIVITY and data not in ids:
+                ids.append(data)
+        return ids
+
+    def delete_selected(self):
+        """工具栏：删除选中的活动（可多选）。"""
+        ids = self._selected_activity_ids()
+        if not ids:
+            QMessageBox.information(self, "删除", "请先在左侧选中要删除的活动\n（多选：按住 Ctrl 或 Shift 点击）")
+            return
+        self._delete_ids(ids, f"确定删除选中的 {len(ids)} 条记录？")
+
+    def reidentify_devices(self):
+        """按当前“设备型号表”重新识别所有活动的码表型号。"""
+        from core.fit_parser import _format_device
+
+        overrides = self.config.get("device_models") or {}
+        n = self.db.reidentify_devices(
+            lambda brand, product, pn, hw, sw: _format_device(
+                brand, product, pn, overrides=overrides, hw_version=hw, sw_version=sw))
+        self.load_months()
+        self.statusBar().showMessage(f"已按设备型号表重新识别 {n} 条记录", 5000)
+
+    def _on_tree_context_menu(self, pos):
+        item = self.month_tree.itemAt(pos)
+        if item is None:
+            return
+        from PySide6.QtWidgets import QMenu
+
+        menu = QMenu(self)
+        act_one = None
+        if item.data(0, Qt.UserRole)[0] == ACTIVITY:
+            act_one = menu.addAction("删除此记录")
+        sel_ids = self._selected_activity_ids()
+        act_sel = None
+        if len(sel_ids) > 1:
+            act_sel = menu.addAction(f"删除选中的 {len(sel_ids)} 条记录")
+        menu.addSeparator()
+        act_all = menu.addAction("清空全部记录…")
+        chosen = menu.exec(self.month_tree.viewport().mapToGlobal(pos))
+        if chosen is act_one:
+            self._delete_ids([item.data(0, Qt.UserRole)[1]], "确定删除这条记录？")
+        elif chosen is act_sel:
+            self._delete_ids(sel_ids, f"确定删除选中的 {len(sel_ids)} 条记录？")
+        elif chosen is act_all:
+            all_ids = [a["id"] for a in self.db.list_activities(limit=100000)]
+            if all_ids:
+                self._delete_ids(all_ids, f"确定清空全部 {len(all_ids)} 条记录？此操作不可恢复！")
+
+    def _delete_ids(self, ids, question):
+        if not ids:
+            return
+        ret = QMessageBox.question(self, "确认删除", question + "\n（FIT 原文件不受影响，可重新导入）",
+                                   QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if ret != QMessageBox.Yes:
+            return
+        for aid in ids:
+            self.db.delete_activity(aid)
+        log.info("删除活动 %d 条: %s", len(ids), ids[:10])
+        self._after_delete()
+
+    def _after_delete(self):
+        self.load_months()
+        if self.cur_activity is not None and self.db.get_activity(self.cur_activity["id"]) is None:
+            # 当前打开的活动被删除 → 回到月度页
+            self.cur_activity = None
+            self.cur_analysis = None
+            self.stack.setCurrentWidget(self.month_page)
+            months = self.db.months()
+            if months:
+                self.show_month(months[0]["month"])
+            else:
+                self.mv_title.setText("暂无数据，请导入 FIT 文件")
+        self.statusBar().showMessage("已删除", 4000)
+
     # ---------------- 月度页 ----------------
     def show_month(self, month):
         self.stack.setCurrentWidget(self.month_page)
@@ -552,16 +660,12 @@ class MainWindow(QMainWindow):
         }
         self.cur_analysis = an
 
-        # 概览图表
+        # 概览图表（Web 式自适应：图表填满宽度，坐标轴刻度随尺寸自动调整，绝不重叠）
         self._clear_layout(self.ov_charts)
-        max_w = 1150  # 最宽卡片决定容器宽度 → 横向滚动条范围
         km_data = an["per_km"]
         if km_data:
             cats = [str(p["km"] + 1) if (p["km"] + 1) % 5 == 0 else "" for p in km_data]
-            w = max(700, len(km_data) * 30)  # 每公里一根柱 ≥30px
-            max_w = max(max_w, w)
             c = self._card()
-            c.setFixedWidth(w)
             c.layout().addWidget(ch.bar_chart(
                 "每公里平均速度 (km/h)", cats, [p.get("avg_speed_kmh") or 0 for p in km_data],
                 "#1e88e5", "km/h", 300, "%.1f"))
@@ -577,48 +681,33 @@ class MainWindow(QMainWindow):
                 continue
             xs = [p["t"] for p in pts]
             ys = [p["v"] * 3.6 if key == "speed" else p["v"] for p in pts]
-            w = max(900, len(pts) * 3)  # 每个数据点 ≥3px，防止曲线数据挤在一起
-            max_w = max(max_w, w)
             c = self._card()
-            c.setFixedWidth(w)
             c.layout().addWidget(ch.line_chart_time(title, xs, ys, color, unit, 320, "%.0f"))
             self.ov_charts.addWidget(c)
         alt_pts = series.get("alt") or []
         if alt_pts:
-            w = max(900, len(alt_pts) * 3)
-            max_w = max(max_w, w)
             c = self._card()
-            c.setFixedWidth(w)
             c.layout().addWidget(ch.line_chart(
                 "海拔 (m) — 里程 (km)", [p["t"] for p in alt_pts], [p["v"] for p in alt_pts],
                 "#8d6e63", "m", 320, "%.0f"))
             self.ov_charts.addWidget(c)
         t = an["temp"]
         if t.get("has"):
-            pts_t = t["series"]
-            w = max(900, len(pts_t) * 3)
-            max_w = max(max_w, w)
             c = self._card()
-            c.setFixedWidth(w)
             c.layout().addWidget(ch.line_chart_time(
                 f"设备温度 (°C) · 平均{t['avg']} 最高{t['max']} 最低{t['min']}",
-                [p["t"] for p in pts_t], [p["v"] for p in pts_t],
+                [p["t"] for p in t["series"]], [p["v"] for p in t["series"]],
                 "#00acc1", "°C", 260, "%.1f"))
             self.ov_charts.addWidget(c)
-        self.ov_container.setMinimumWidth(max_w)
 
-        # 区间统计（短标签 + 斜排，防止长标签挤在一起；按柱数加宽）
+        # 区间统计（Web 式自适应；短标签）
         self._clear_layout(self.zs_charts)
-        zs_max_w = 900
         sz = an["speed_zones"]
         if sz:
-            w = max(800, len(sz) * 110)
-            zs_max_w = max(zs_max_w, w)
             c = self._card()
-            c.setFixedWidth(w)
             c.layout().addWidget(ch.bar_chart(
                 "速度区间时长 (秒)", _short_zone_labels(self.config.get("speed_zone_kmh"), "km/h"),
-                [z["seconds"] for z in sz], "#1e88e5", "秒", 300, "%.0f", label_angle=-45))
+                [z["seconds"] for z in sz], "#1e88e5", "秒", 300, "%.0f"))
             tip = QLabel(ch.zone_text(sz))
             tip.setObjectName("muted")
             tip.setWordWrap(True)
@@ -626,10 +715,7 @@ class MainWindow(QMainWindow):
             self.zs_charts.addWidget(c)
         hz = an["hr_zones"]
         if hz:
-            w = max(700, len(hz) * 120)
-            zs_max_w = max(zs_max_w, w)
             c = self._card()
-            c.setFixedWidth(w)
             c.layout().addWidget(ch.bar_chart(
                 "心率区间时长 (秒)", [f"Z{i + 1}" for i in range(len(hz))],
                 [z["seconds"] for z in hz], "#d81b60", "秒", 300, "%.0f"))
@@ -640,19 +726,15 @@ class MainWindow(QMainWindow):
             self.zs_charts.addWidget(c)
         cz = an["cadence_zones"]
         if cz:
-            w = max(800, len(cz) * 110)
-            zs_max_w = max(zs_max_w, w)
             c = self._card()
-            c.setFixedWidth(w)
             c.layout().addWidget(ch.bar_chart(
                 "踏频区间时长 (秒)", _short_zone_labels(self.config.get("cadence_zone_rpm"), "rpm"),
-                [z["seconds"] for z in cz], "#2e7d32", "秒", 300, "%.0f", label_angle=-45))
+                [z["seconds"] for z in cz], "#2e7d32", "秒", 300, "%.0f"))
             tip = QLabel(ch.zone_text(cz))
             tip.setObjectName("muted")
             tip.setWordWrap(True)
             c.layout().addWidget(tip)
             self.zs_charts.addWidget(c)
-        self.zs_container.setMinimumWidth(zs_max_w)
 
         # 记圈
         self.lap_table.setRowCount(len(laps))

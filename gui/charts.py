@@ -17,9 +17,9 @@ PALETTE = ["#1e88e5", "#43a047", "#f57c00", "#8e24aa", "#e53935", "#00acc1", "#6
 
 
 class _WheelForward(QObject):
-    """把图表上的滚轮事件转发给外层 QScrollArea（QChartView 是滚动区子类，
-    默认会吞掉滚轮事件导致页面无法滚动）。
-    优先竖向滚动；若外层只有横向滚动条（横向图表条），把竖直滚轮转为横向滚动。"""
+    """图表上的滚轮处理（QChartView 是滚动区子类，默认会吞掉滚轮事件）：
+    1) 若图表所在横向滚动条还能滚（每图独立横滚），先横向滚动该图表；
+    2) 该图横向到头后，滚轮继续滚动外层页面。"""
 
     def eventFilter(self, obj, event):
         if event.type() != QEvent.Wheel:
@@ -30,23 +30,32 @@ class _WheelForward(QObject):
             return False
         view = obj.parent()  # viewport 的父级 = 图表视图
         p = view.parent() if view is not None else None
+        chart_hsb = None
+        page_scroll = None
         while p is not None:
             if isinstance(p, QScrollArea):
-                vsb = p.verticalScrollBar()
                 hsb = p.horizontalScrollBar()
-                if vsb is not None and vsb.maximum() > 0 and dy != 0:
-                    QApplication.sendEvent(p.viewport(), event)
-                    return True
-                if hsb is not None and hsb.maximum() > 0:
-                    step = dy if dy != 0 else dx
-                    hsb.setValue(hsb.value() - step // 2)
-                    return True
+                vsb = p.verticalScrollBar()
+                if chart_hsb is None and hsb is not None and hsb.maximum() > 0:
+                    chart_hsb = hsb
+                if vsb is not None and vsb.maximum() > 0:
+                    page_scroll = p
             p = p.parent()
+        step = dy if dy != 0 else dx
+        if chart_hsb is not None:
+            can_scroll = (step < 0 and chart_hsb.value() < chart_hsb.maximum()) or \
+                         (step > 0 and chart_hsb.value() > chart_hsb.minimum())
+            if can_scroll:
+                chart_hsb.setValue(chart_hsb.value() - step // 2)
+                return True
+        if page_scroll is not None:
+            QApplication.sendEvent(page_scroll.viewport(), event)
+            return True
         return False
 
 
-def _view(chart, height):
-    v = ScrollableChartView(chart)
+def _view(chart, height, adaptive=None):
+    v = ScrollableChartView(chart, adaptive=adaptive)
     v.setRenderHint(QPainter.Antialiasing)
     v.setMinimumHeight(height)
     v.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -56,26 +65,118 @@ def _view(chart, height):
 
 
 class ScrollableChartView(QChartView):
-    """图表视图（QChartView 本身无需特殊处理，滚轮转发由事件过滤器完成）。"""
+    """图表视图：滚轮转发 + 自适应坐标轴（像 Web 图表一样，尺寸变化时自动调整刻度密度，永不重叠）。"""
 
-    pass
+    def __init__(self, chart, adaptive=None):
+        super().__init__(chart)
+        self._adaptive = adaptive  # {"type": "time"|"numeric"|"cat", ...}
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        if self._adaptive:
+            from PySide6.QtCore import QTimer
+
+            QTimer.singleShot(0, self._tune_axes)
+
+    def _replace_x_axis(self, chart, series, new_ax):
+        """用新横轴替换旧横轴（QCategoryAxis/QBarCategoryAxis 无 clear，只能换对象）。"""
+        old = chart.axisX(series)
+        if old is not None:
+            chart.removeAxis(old)
+        chart.addAxis(new_ax, Qt.AlignBottom)
+        series.attachAxis(new_ax)
+
+    def _tune_axes(self):
+        try:
+            chart = self.chart()
+            if chart is None or not chart.series():
+                return
+            plot = chart.plotArea()
+            pw, ph = plot.width(), plot.height()
+            if pw <= 0 or ph <= 0:
+                return
+            s = chart.series()[0]
+            ax_x = chart.axisX(s)
+            ax_y = chart.axisY(s)
+        except Exception:
+            return
+        import math
+
+        # 纵轴刻度数随高度自适应（每 45px 一个刻度，3~8 个）
+        if isinstance(ax_y, QValueAxis):
+            ax_y.setTickCount(max(3, min(8, int(ph / 45))))
+        t = self._adaptive.get("type")
+        try:
+            if t == "time" and isinstance(ax_x, QCategoryAxis):
+                maxv = max(self._adaptive.get("xs") or [0.0]) or 0.0
+                target = max(1, int(pw / 95))  # 每 95px 一个时间标签
+                step = max(60, int(math.ceil(maxv / target)))
+                for nice in (60, 120, 300, 600, 900, 1800, 3600):
+                    if step <= nice:
+                        step = nice
+                        break
+                new_ax = QCategoryAxis()
+                new_ax.setLabelsPosition(QCategoryAxis.AxisLabelsPositionOnValue)
+                new_ax.setLabelsFont(_axis_font())
+                _no_title(new_ax)
+                for t0 in range(0, int(maxv) + step, step):
+                    new_ax.append(f"{t0 // 60}:{t0 % 60:02d}", float(t0))
+                new_ax.setRange(0, float(maxv))
+                self._replace_x_axis(chart, s, new_ax)
+            elif t == "cat" and isinstance(ax_x, QBarCategoryAxis):
+                cats = self._adaptive.get("cats") or []
+                n = len(cats)
+                if n > 0:
+                    skip = max(1, int(90 / max(1.0, pw / n)))  # 保证标签间距 ≥90px
+                    newcats = [cats[i] if (i % skip == 0 or i == n - 1) else "" for i in range(n)]
+                    new_ax = QBarCategoryAxis()
+                    new_ax.setLabelsFont(_axis_font())
+                    new_ax.append(newcats)
+                    self._replace_x_axis(chart, s, new_ax)
+            elif t == "numeric" and isinstance(ax_x, QValueAxis):
+                ax_x.setTickCount(max(3, min(8, int(pw / 170))))
+        except Exception:
+            pass
 
 
 def _style(chart, title):
     chart.setTitle(title)
     chart.legend().hide()
     chart.setTheme(QChart.ChartThemeLight)
-    chart.setMargins(QMargins(8, 8, 8, 8))
+    chart.setMargins(QMargins(6, 6, 6, 6))
     f = QFont("Microsoft YaHei", 9)
     chart.setTitleFont(f)
+
+
+def _axis_font(size=8):
+    f = QFont("Microsoft YaHei", size)
+    f.setPixelSize(10)  # 坐标刻度文字用固定小字号，避免在窄高度下互相挤压
+    return f
+
+
+def _no_title(ax):
+    """去掉轴标题（图表标题已说明含义），避免轴标题与刻度文字碰撞。"""
+    ax.setTitleVisible(False)
+    ax.setTitleText("")
+    return ax
+
+
+def _x_axis_numeric():
+    ax = QValueAxis()
+    ax.setLabelFormat("%.0f")
+    ax.setTickCount(6)  # 横轴最多 6 个刻度，防标签重叠
+    ax.setLabelsFont(_axis_font())
+    return _no_title(ax)
 
 
 def _y_axis(label, fmt):
     ax = QValueAxis()
     ax.setTitleText(label)
     ax.setLabelFormat(fmt)
+    ax.setTickCount(5)  # 纵轴固定 5 个刻度，防标签重叠
+    ax.setLabelsFont(_axis_font())
     ax.setGridLineVisible(True)
-    return ax
+    return _no_title(ax)
 
 
 def line_chart(title, xs, ys, color="#1e88e5", y_label="", height=200, fmt="%.0f"):
@@ -89,18 +190,17 @@ def line_chart(title, xs, ys, color="#1e88e5", y_label="", height=200, fmt="%.0f
             continue
         s.append(float(x), float(y))
     chart.addSeries(s)
-    ax_x = QValueAxis()
-    ax_x.setLabelFormat("%.0f")
+    ax_x = _x_axis_numeric()
     ax_y = _y_axis(y_label, fmt)
     chart.addAxis(ax_x, Qt.AlignBottom)
     chart.addAxis(ax_y, Qt.AlignLeft)
     s.attachAxis(ax_x)
     s.attachAxis(ax_y)
-    return _view(chart, height)
+    return _view(chart, height, adaptive={"type": "numeric"})
 
 
 def line_chart_time(title, xs_sec, ys, color="#1e88e5", y_label="", height=200, fmt="%.0f"):
-    """X 轴为时间（mm:ss 标签）。"""
+    """X 轴为时间（mm:ss 标签，最多 6 个防重叠）。"""
     chart = QChart()
     _style(chart, title)
     s = QLineSeries()
@@ -112,12 +212,13 @@ def line_chart_time(title, xs_sec, ys, color="#1e88e5", y_label="", height=200, 
     chart.addSeries(s)
     ax_x = QCategoryAxis()
     ax_x.setLabelsPosition(QCategoryAxis.AxisLabelsPositionOnValue)
-    ax_x.setTitleText("时间")
+    _no_title(ax_x)
+    ax_x.setLabelsFont(_axis_font())
     maxv = max(xs_sec) if xs_sec else 0
-    # 自适应标签数量（约 8 个），避免时间轴标签重叠
+    # 自适应标签数量（最多 5 个），时间轴标签绝不重叠
     import math
 
-    step = max(60, int(math.ceil(maxv / 8)))
+    step = max(60, int(math.ceil(maxv / 5)))
     for nice in (60, 120, 300, 600, 900, 1800, 3600):
         if step <= nice:
             step = nice
@@ -130,7 +231,7 @@ def line_chart_time(title, xs_sec, ys, color="#1e88e5", y_label="", height=200, 
     chart.addAxis(ax_y, Qt.AlignLeft)
     s.attachAxis(ax_x)
     s.attachAxis(ax_y)
-    return _view(chart, height)
+    return _view(chart, height, adaptive={"type": "time", "xs": list(xs_sec)})
 
 
 def bar_chart(title, categories, values, color="#1e88e5", y_label="", height=220, fmt="%.0f", label_angle=0):
@@ -147,6 +248,7 @@ def bar_chart(title, categories, values, color="#1e88e5", y_label="", height=220
     chart.addSeries(series)
     ax_x = QBarCategoryAxis()
     ax_x.append([str(c) for c in categories])
+    ax_x.setLabelsFont(_axis_font())
     if label_angle:
         ax_x.setLabelsAngle(label_angle)
     ax_y = _y_axis(y_label, fmt)
@@ -154,7 +256,7 @@ def bar_chart(title, categories, values, color="#1e88e5", y_label="", height=220
     chart.addAxis(ax_y, Qt.AlignLeft)
     series.attachAxis(ax_x)
     series.attachAxis(ax_y)
-    return _view(chart, height)
+    return _view(chart, height, adaptive={"type": "cat", "cats": list(categories)})
 
 
 def zone_text(zones):

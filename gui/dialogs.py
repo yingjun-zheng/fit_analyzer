@@ -68,6 +68,14 @@ class SettingsDialog(QDialog):
         tip.setObjectName("muted")
         tip.setWordWrap(True)
 
+        # 设备型号表：新码表可在此手动登记（厂商/产品码 = 型号名）
+        dm = d.get("device_models") or {}
+        self.edDevice = QPlainTextEdit()
+        self.edDevice.setPlainText("\n".join(f"{k} = {v}" for k, v in dm.items()))
+        self.edDevice.setPlaceholderText("每行一个：厂商/产品码 = 型号名\n例：\nbryton/1801 = 百锐腾 Rider 15\nmagene/310 = C606 Pro")
+        self.edDevice.setMaximumHeight(110)
+        form.addRow("设备型号表（新码表登记）", self.edDevice)
+
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.button(QDialogButtonBox.Ok).setText("保存")
         buttons.button(QDialogButtonBox.Cancel).setText("取消")
@@ -92,6 +100,22 @@ class SettingsDialog(QDialog):
             timeout = int(self.edTimeout.text().strip() or "120")
         except ValueError:
             timeout = 120
+        # 设备型号表解析：每行 "厂商/产品码 = 型号名"
+        device_models = {}
+        for line in self.edDevice.toPlainText().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" in line:
+                k, v = line.split("=", 1)
+            elif " " in line:
+                k, v = line.split(None, 1)
+            else:
+                continue
+            k = k.strip()
+            v = v.strip()
+            if k and v and "/" in k:
+                device_models[k] = v
         self.config.update({
             "hr_zone_pcts": _parse_float_list(self.edHrPcts.text()),
             "hr_max_override": hr_max,
@@ -103,6 +127,7 @@ class SettingsDialog(QDialog):
             "ai_model": self.edModel.text().strip(),
             "ai_temperature": temp,
             "ai_timeout": timeout,
+            "device_models": device_models,
         })
         self.accept()
 

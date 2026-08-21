@@ -25,12 +25,17 @@ def check(name, cond, extra=""):
 
 
 def main():
-    fit_dir = Path(r"F:\byciclefits")
-    if not fit_dir.exists():
-        print("!! F:\\byciclefits 不存在，跳过真实数据测试")
+    # 测试数据：优先 F:\byciclefits，其次 C:\Users\zhengyingjun\Documents\deepseek\fittestdata
+    fit_dir = None
+    for cand in (Path(r"F:\byciclefits"), Path(r"C:\Users\zhengyingjun\Documents\deepseek\fittestdata")):
+        if cand.exists() and any(cand.glob("*.fit")):
+            fit_dir = cand
+            break
+    if fit_dir is None:
+        print("!! 未找到 FIT 测试数据（F:\\byciclefits 或 fittestdata）")
         return 1
     files = sorted(fit_dir.glob("*.fit"))
-    print(f"真实 FIT 文件: {len(files)} 个")
+    print(f"真实 FIT 文件: {len(files)} 个（来自 {fit_dir}）")
 
     tmp = Path(tempfile.mkdtemp(prefix="fit_smoke_"))
     logging_setup.setup_logging(tmp, console=False)
