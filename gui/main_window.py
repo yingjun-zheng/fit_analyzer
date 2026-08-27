@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QMessageBox,
     QPushButton,
@@ -391,6 +392,28 @@ class MainWindow(QMainWindow):
         ai_page = QWidget()
         ai_lay = QVBoxLayout(ai_page)
         ai_lay.setContentsMargins(12, 12, 12, 12)
+
+        # 自然语言查询（工具调用 Agent 原型）
+        nl_label = QLabel("自然语言查询（LLM 自动选择分析工具）")
+        nl_label.setObjectName("h3")
+        ai_lay.addWidget(nl_label)
+        nl_in_row = QHBoxLayout()
+        self.nl_input = QLineEdit()
+        self.nl_input.setPlaceholderText("用自然语言提问，例如：这次爬坡多吗？第 5 公里配速如何？心率区间分布？")
+        self.nl_input.returnPressed.connect(self.nl_query)
+        self.nl_btn = QPushButton("🔍 智能查询")
+        self.nl_btn.setObjectName("primary")
+        self.nl_btn.clicked.connect(self.nl_query)
+        nl_in_row.addWidget(self.nl_input, 1)
+        nl_in_row.addWidget(self.nl_btn)
+        ai_lay.addLayout(nl_in_row)
+        self.nl_text = QTextEdit()
+        self.nl_text.setReadOnly(True)
+        self.nl_text.setPlaceholderText("在这里查看「模型选择了哪些工具 → 结果 → 最终回答」。")
+        self.nl_text.setMinimumHeight(160)
+        ai_lay.addWidget(self.nl_text, 2)
+
+        # 传统报告生成
         btn_row = QHBoxLayout()
         self.ai_run_btn = QPushButton("🤖 生成 AI 分析报告")
         self.ai_run_btn.setObjectName("primary")
@@ -630,6 +653,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "提示", "活动不存在")
             return
         records = self.db.get_records(aid)
+        self.cur_records = records
         laps = self.db.get_laps(aid)
         self.cur_activity = act
         self.cur_laps = laps
@@ -896,6 +920,53 @@ class MainWindow(QMainWindow):
                 f"连接成功 ✅\n配置模型：{payload.get('configured_model')}\n服务器可用模型：{models}")
         else:
             self.ai_text.setPlainText(f"连接失败：{payload.get('error')}")
+
+    # ---------------- 自然语言查询（工具调用 Agent） ----------------
+    def nl_query(self):
+        if not self.config.get("ai_enabled"):
+            QMessageBox.information(self, "提示", "请先在「设置」中启用并配置 AI")
+            return
+        if not self.cur_activity:
+            return
+        q = self.nl_input.text().strip()
+        if not q:
+            return
+        self.nl_btn.setEnabled(False)
+        self.nl_text.setPlainText("思考中…（LLM 正在选择并调用分析工具）")
+        self._run_worker(self._do_nl_query, self._on_nl_done, q)
+
+    def _do_nl_query(self, q):
+        from core import nl_query
+
+        return nl_query.run_nl_query(
+            self._ai_client(), self.cur_activity, self.cur_records,
+            self.config, q, laps=self.cur_laps, max_rounds=5)
+
+    def _on_nl_done(self, ok, payload):
+        self.nl_btn.setEnabled(True)
+        if not ok:
+            self.nl_text.setPlainText(f"错误：{payload}")
+            return
+        steps = payload.get("steps") or []
+        lines = []
+        if steps:
+            lines.append("【工具调用链路】")
+            for i, s in enumerate(steps, 1):
+                status = "✅" if s.get("ok") else "❌"
+                args = s.get("args") or {}
+                arg_s = " ".join(f"{k}={v}" for k, v in args.items()) if args else ""
+                lines.append(f"  {i}. {status} {s['tool']}({arg_s})")
+            lines.append("")
+        if payload.get("fallback"):
+            lines.append("（注：当前模型不支持工具调用，已自动降级为预计算摘要 + 单次问答）\n")
+        thinking = (payload.get("thinking") or "").strip()
+        if thinking:
+            lines.append("【思考过程】")
+            lines.append(thinking)
+            lines.append("")
+        lines.append("【回答】")
+        lines.append(payload.get("answer") or "（模型未返回内容）")
+        self.nl_text.setPlainText("\n".join(lines))
 
     # ---------------- 后台任务 ----------------
     def _run_worker(self, fn, on_done, *args):

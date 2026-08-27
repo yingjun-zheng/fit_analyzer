@@ -2,6 +2,7 @@
 
 所有请求发往用户自己配置的地址，本软件不内置任何收费接口。
 """
+import json
 import logging
 import time
 
@@ -42,8 +43,12 @@ class AIClient:
         r = self.chat_full(messages, model=model, temperature=temperature, timeout=timeout)
         return r["content"] or r["reasoning"] or ""
 
-    def chat_full(self, messages, model=None, temperature=None, timeout=None):
-        """发送对话，返回 {"content": 结论, "reasoning": 思考过程}。"""
+    def chat_full(self, messages, model=None, temperature=None, timeout=None, tools=None):
+        """发送对话，返回 {"content": 结论, "reasoning": 思考过程, "tool_calls": [...]}。
+
+        tools: OpenAI function-calling 工具列表（非空时启用工具调用，兼容 Ollama / DeepSeek / OpenAI）。
+        tool_calls 中每一项为 {"id", "name", "arguments": <已解析为 dict>}。
+        """
         if not self.base_url:
             raise AIError("未配置 AI 服务地址（设置 → AI）")
         url = f"{self.base_url}/chat/completions"
@@ -54,7 +59,10 @@ class AIClient:
             "stream": False,
             "max_tokens": 4096,  # 推理模型（qwen3.5 等）思考 + 结论都容纳，避免截断
         }
-        log.info("AI 请求 -> %s model=%s messages=%d", self.base_url, payload["model"], len(messages))
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
+        log.info("AI 请求 -> %s model=%s messages=%d tools=%s", self.base_url, payload["model"], len(messages), bool(tools))
         t0 = time.time()
         try:
             status, obj = http_utils.http_json(url, timeout=timeout or self.timeout, method="POST", payload=payload, headers=self._headers())
@@ -79,8 +87,27 @@ class AIClient:
             raise AIError("AI 响应格式异常")
         content = message.get("content") or ""
         reasoning = message.get("reasoning") or message.get("reasoning_content") or ""  # DeepSeek 用 reasoning_content
-        log.info("AI 响应成功 耗时=%.1fs 内容=%d 思考=%d", time.time() - t0, len(content), len(reasoning))
-        return {"content": content, "reasoning": reasoning}
+        tool_calls = []
+        for tc in (message.get("tool_calls") or []):
+            fn = tc.get("function") or {}
+            name = fn.get("name")
+            args_raw = fn.get("arguments")
+            if isinstance(args_raw, str):
+                try:
+                    args = json.loads(args_raw) if args_raw.strip() else {}
+                except Exception:
+                    args = {"_raw": args_raw}  # 解析失败保留原文，交给上层处理
+            elif isinstance(args_raw, dict):
+                args = args_raw
+            else:
+                args = {}
+            tool_calls.append({
+                "id": tc.get("id") or f"call_{len(tool_calls)}",
+                "name": name,
+                "arguments": args,
+            })
+        log.info("AI 响应成功 耗时=%.1fs 内容=%d 思考=%d 工具调用=%d", time.time() - t0, len(content), len(reasoning), len(tool_calls))
+        return {"content": content, "reasoning": reasoning, "tool_calls": tool_calls}
 
     def test(self):
         if not self.base_url:
