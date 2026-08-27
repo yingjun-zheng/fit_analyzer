@@ -64,8 +64,14 @@ AI 调用全部走你配置的地址，软件不内置任何收费接口，Key �
 
 ## 五、轨迹图
 
-- 「轨迹」页使用**随机背景图**：程序每次打开活动时从 `backgrounds\` 目录（随 EXE 打包）随机选一张作为背景，轨迹按 GPS 包围盒自动缩放适配到背景图上。
-- 想换/增加背景：把图片（jpg/jpeg/png 等）放进 `backgrounds\` 文件夹（源码版）后重新打包即可；没有该目录时回退到根目录 `back9.jpeg`。
+「轨迹」页支持两种模式，自动切换：
+
+1. **高德在线地图（推荐，可选）**：在 `设置 → 高德地图` 填入你在[高德开放平台](https://lbs.amap.com/)申请的「**Web端(JS API)**」类型 key 与安全密钥后，轨迹直接叠加在真实地图上（自绘起终点标记、前端 WGS-84→GCJ-02 纠偏贴合道路）。
+   - 如何申请：高德开放平台 → 控制台 → 应用管理 → 创建应用 → 添加 key，**服务平台务必选「Web端(JS API)」**，并在「设置」中生成/查看**安全密钥 securityJsCode**。
+   - key 会明文存于本地配置并写进内嵌网页，仅供本地渲染；建议在控制台给 key 配好**域名白名单**（桌面端来源为空时白名单留空即可）。
+   - **依赖**：需环境中能加载 `PySide6` 的 WebEngine 组件（`PySide6-Addons` / 完整 `PySide6`）。打包单文件时 WebEngine 组件较大，请确认 build 脚本已包含 QtWebEngine 资源。
+2. **固定背景图（默认）**：未配置 key，或运行环境缺 WebEngine 组件时，自动回退——从 `backgrounds\` 目录随机选一张图片作背景，轨迹按 GPS 包围盒缩放适配。此时轨迹页**底部小字**会提示"未配置高德地图 Key"或"缺少 WebEngine 组件"。
+   - 想换/增加背景：把图片（jpg/jpeg/png 等）放进 `backgrounds\` 文件夹（源码版）后重新打包即可；没有该目录时回退到根目录 `back9.jpeg`。
 - 轨迹为逐秒定位点的近似连线；无 GPS 数据时该页提示无轨迹。
 
 ## 六、数据与日志
@@ -83,6 +89,10 @@ powershell -ExecutionPolicy Bypass -File build\build_exe.ps1        # 目录版
 powershell -ExecutionPolicy Bypass -File build\build_exe.ps1 -OneFile
 ```
 
+> 打包环境需同时具备 `PySide6`（含 WebEngine 组件，完整版或 `PySide6-Addons`）+ `pyinstaller` + `pillow` + `fitparse`。
+> **WebEngine 已通过 `build\fit_analyzer.spec` 的 `hiddenimports` 显式纳入**（`QtWebEngineWidgets`/`QtWebEngineCore`/`QtWebChannel`），打包后产物约 500MB+，属正常（含 `QtWebEngineProcess.exe`、`resources.pak`、`qtwebengine_locales`）。
+> 生成目录版后建议用 `骑行FIT数据分析器.exe --selftest` 做一次离屏自检，确认 WebEngine/主程序正常。
+
 ## 八、项目结构
 
 ```
@@ -92,6 +102,7 @@ fit_analyzer/
 │   ├── main_window.py    # 主窗口：月份-活动树 / 月度汇总 / 活动详情标签页
 │   ├── charts.py         # QtCharts 图表封装（折线/柱状/区间）
 │   ├── track_widget.py   # 轨迹控件（固定背景图 + 轨迹）
+│   ├── amap_track.py     # TrackMapPanel：高德在线地图 / 图片背景 自动切换
 │   ├── dialogs.py        # 设置 / 日志对话框
 │   └── theme.py          # 样式与格式化
 ├── core/
@@ -100,6 +111,7 @@ fit_analyzer/
 │   ├── analysis.py       # 分公里/区间/曲线/轨迹统计
 │   ├── ai_client.py      # OpenAI 兼容客户端（含模型不存在提示）
 │   ├── ai_analysis.py    # 活动/月度 AI 分析提示词
+│   ├── month_agent.py    # 月度骑行数据查询 Agent（工具调用回答「某月训练」问题）
 │   └── config.py / logging_setup.py / http_utils.py
 ├── back9.jpeg            # 轨迹背景图
 ├── build/                # PyInstaller spec + 打包脚本

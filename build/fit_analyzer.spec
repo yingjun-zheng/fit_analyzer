@@ -11,6 +11,13 @@ DATAS = [
     (str(ROOT / "backgrounds"), "backgrounds"),
     (str(ROOT / "back9.jpeg"), "."),
 ]
+# 轨迹地图用到的高德 WebEngine 组件：amap_track.py 用 try/except 包住顶层 import，
+# 显式声明 hiddenimports 确保 PyInstaller 收集 WebEngine hook 及其资源（进程/翻译/库）。
+_WEBENGINE_IMPORTS = [
+    "PySide6.QtWebEngineWidgets",
+    "PySide6.QtWebEngineCore",
+    "PySide6.QtWebChannel",
+]
 
 onefile = os.environ.get("CRP_ONEFILE") == "1"
 
@@ -19,7 +26,7 @@ a = Analysis(
     pathex=[str(ROOT)],
     binaries=[],
     datas=DATAS,
-    hiddenimports=[],
+    hiddenimports=_WEBENGINE_IMPORTS,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

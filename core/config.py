@@ -22,9 +22,13 @@ DEFAULTS = {
     "track_max_points": 2000,
     # 设备型号表（用户可扩展）：{"厂商/产品码": "型号名"}，如 {"bryton/1801": "百锐腾 Rider 15"}
     "device_models": {},
+    # ---- 高德地图（在线轨迹地图，可选） ----
+    # amap_key 须为「Web端(JS API)」类型；amap_security 为对应的安全密钥(securityJsCode)
+    "amap_key": "",
+    "amap_security": "",
 }
 
-_SENSITIVE = {"ai_api_key"}
+_SENSITIVE = {"ai_api_key", "amap_security"}
 
 
 class Config:
@@ -78,6 +82,7 @@ class Config:
 
     def public_dict(self):
         out = dict(self.data)
-        if out.get("ai_api_key"):
-            out["ai_api_key"] = "******"
+        for k in _SENSITIVE:
+            if out.get(k):
+                out[k] = "******"
         return out

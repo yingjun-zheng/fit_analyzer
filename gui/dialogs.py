@@ -76,6 +76,22 @@ class SettingsDialog(QDialog):
         self.edDevice.setMaximumHeight(110)
         form.addRow("设备型号表（新码表登记）", self.edDevice)
 
+        # 高德地图（在线轨迹地图，可选）
+        amap_title = QLabel("高德地图（在线轨迹地图，可选）")
+        amap_title.setObjectName("h3")
+        form.addRow(amap_title)
+        self.edAmapKey = QLineEdit(d.get("amap_key") or "")
+        self.edAmapKey.setPlaceholderText("高德开放平台申请的 Web端(JS API) Key")
+        self.edAmapSec = QLineEdit(d.get("amap_security") or "")
+        self.edAmapSec.setEchoMode(QLineEdit.Password)
+        self.edAmapSec.setPlaceholderText("安全密钥 securityJsCode（设置页生成）")
+        form.addRow("高德 Key", self.edAmapKey)
+        form.addRow("安全密钥", self.edAmapSec)
+        amap_tip = QLabel("配置后「轨迹」页显示真实地图轨迹；不配置则保留原固定背景图示意轨迹。")
+        amap_tip.setObjectName("muted")
+        amap_tip.setWordWrap(True)
+        form.addRow(amap_tip)
+
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.button(QDialogButtonBox.Ok).setText("保存")
         buttons.button(QDialogButtonBox.Cancel).setText("取消")
@@ -128,6 +144,8 @@ class SettingsDialog(QDialog):
             "ai_temperature": temp,
             "ai_timeout": timeout,
             "device_models": device_models,
+            "amap_key": self.edAmapKey.text().strip(),
+            "amap_security": self.edAmapSec.text().strip(),
         })
         self.accept()
 
