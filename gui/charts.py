@@ -7,6 +7,7 @@ from PySide6.QtCharts import (
     QChart,
     QChartView,
     QLineSeries,
+    QScatterSeries,
     QValueAxis,
 )
 from PySide6.QtCore import QEvent, QMargins, QObject, Qt
@@ -215,7 +216,6 @@ def line_chart_time(title, xs_sec, ys, color="#1e88e5", y_label="", height=200, 
     _no_title(ax_x)
     ax_x.setLabelsFont(_axis_font())
     maxv = max(xs_sec) if xs_sec else 0
-    # 自适应标签数量（最多 5 个），时间轴标签绝不重叠
     import math
 
     step = max(60, int(math.ceil(maxv / 5)))
@@ -232,6 +232,45 @@ def line_chart_time(title, xs_sec, ys, color="#1e88e5", y_label="", height=200, 
     s.attachAxis(ax_x)
     s.attachAxis(ax_y)
     return _view(chart, height, adaptive={"type": "time", "xs": list(xs_sec)})
+
+
+def line_chart_cat(title, categories, values, color="#1e88e5", y_label="", height=220, fmt="%.0f"):
+    """类别 X 轴折线图（X 轴为字符串类别，如月份/公里序号）。带数据点标记。"""
+    chart = QChart()
+    _style(chart, title)
+
+    line = QLineSeries()
+    line.setPen(QPen(QColor(color), 1.8))
+    for i, v in enumerate(values):
+        line.append(float(i), float(v or 0))
+    chart.addSeries(line)
+
+    # 数据点标记
+    pts = QScatterSeries()
+    pts.setMarkerSize(6.0)
+    pts.setColor(QColor(color))
+    pts.setBorderColor(QColor("#ffffff"))
+    for i, v in enumerate(values):
+        pts.append(float(i), float(v or 0))
+    chart.addSeries(pts)
+
+    ax_x = QCategoryAxis()
+    ax_x.setLabelsPosition(QCategoryAxis.AxisLabelsPositionOnValue)
+    _no_title(ax_x)
+    ax_x.setLabelsFont(_axis_font())
+    ax_x.setGridLineVisible(False)
+    for i, c in enumerate(categories):
+        ax_x.append(str(c), float(i))
+    ax_x.setRange(0, float(max(len(categories) - 1, 1)))
+    ax_y = _y_axis(y_label, fmt)
+    ax_y.setGridLineColor(QColor("#e8e8e8"))
+    chart.addAxis(ax_x, Qt.AlignBottom)
+    chart.addAxis(ax_y, Qt.AlignLeft)
+    line.attachAxis(ax_x)
+    line.attachAxis(ax_y)
+    pts.attachAxis(ax_x)
+    pts.attachAxis(ax_y)
+    return _view(chart, height, adaptive={"type": "numeric"})
 
 
 def bar_chart(title, categories, values, color="#1e88e5", y_label="", height=220, fmt="%.0f", label_angle=0):
@@ -252,6 +291,43 @@ def bar_chart(title, categories, values, color="#1e88e5", y_label="", height=220
     if label_angle:
         ax_x.setLabelsAngle(label_angle)
     ax_y = _y_axis(y_label, fmt)
+    chart.addAxis(ax_x, Qt.AlignBottom)
+    chart.addAxis(ax_y, Qt.AlignLeft)
+    series.attachAxis(ax_x)
+    series.attachAxis(ax_y)
+    return _view(chart, height, adaptive={"type": "cat", "cats": list(categories)})
+
+
+def bar_chart_clean(title, categories, values, color="#1e88e5", y_label="", height=300, fmt="%.0f"):
+    """干净看板风格柱状图：白色背景、淡色网格线、细柱体、无标题、5 公里间隔标签。"""
+    chart = QChart()
+    # 白色背景，无标题
+    chart.setBackgroundBrush(QColor("#ffffff"))
+    chart.setBackgroundRoundness(0)
+    chart.layout().setContentsMargins(0, 0, 0, 0)
+    chart.legend().hide()
+    chart.setMargins(QMargins(6, 6, 6, 6))
+
+    # 细柱体，更窄的间距
+    bs = QBarSet("")
+    bs.setColor(QColor(color))
+    for v in values:
+        bs.append(float(v or 0))
+    series = QBarSeries()
+    series.append(bs)
+    series.setBarWidth(0.55)
+    chart.addSeries(series)
+
+    ax_x = QBarCategoryAxis()
+    ax_x.append([str(c) for c in categories])
+    ax_x.setLabelsFont(_axis_font())
+    ax_x.setGridLineVisible(False)
+    _no_title(ax_x)
+
+    ax_y = _y_axis(y_label, fmt)
+    ax_y.setGridLineColor(QColor("#e8e8e8"))
+    ax_y.setTickCount(5)
+
     chart.addAxis(ax_x, Qt.AlignBottom)
     chart.addAxis(ax_y, Qt.AlignLeft)
     series.attachAxis(ax_x)

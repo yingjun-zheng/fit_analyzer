@@ -37,14 +37,20 @@ MANUFACTURER_DISPLAY = {
 # 产品码 → 型号（无 product_name 时的兜底；部分来源：设备官方导出/社区整理）
 PRODUCT_MODELS = {
     "igpsport": {
-        100: "IGS100", 200: "IGS200", 300: "IGS300", 301: "IGS301",
-        500: "IGS500", 520: "IGS520", 600: "IGS600", 618: "IGS618",
-        620: "IGS620", 630: "IGS630", 800: "IGS800", 900: "IGS900",
+        # BSC 系列（兼容旧固件的产品码变体归到基础型号）
+        100: "BSC100", 101: "BSC100S", 110: "BSC100 Max",
+        200: "BSC200", 201: "BSC200S",
+        300: "BSC300", 301: "BSC300", 302: "BSC300",
+        320: "BSC300T", 321: "BSC300T",
+        500: "BSC500",
+        # iGS 系列（高端触摸屏机型；800 已被官方确认）
+        800: "iGS800",
     },
     "magene": {
         302: "C406", 303: "C406 Pro", 307: "C606", 310: "C606 Pro",
     },
     "bryton": {
+        1800: "Rider 15", 1801: "Rider 15",  # 1800 段为 Rider 15 系列（1801 为早期变体，待确认）
         1815: "Rider 15", 1816: "Rider 16", 1820: "Rider 20",
         1833: "Rider 330", 1841: "Rider 410", 1842: "Rider 420",
         1845: "Rider 450", 1853: "Rider 530", 1854: "Rider 540",
@@ -56,7 +62,10 @@ PRODUCT_MODELS = {
 PRODUCT_NAME_EXPAND = {
     "C606P": "C606 Pro", "C406P": "C406 Pro", "C506P": "C506 Pro",
     "C606": "C606", "C406": "C406", "C506": "C506",
-    "IGS200": "IGS200", "IGS300": "IGS300", "IGS620": "IGS620",
+    # iGPSPORT BSC 系列（product_name 也可能自带型号名）
+    "BSC100": "BSC100", "BSC100S": "BSC100S", "BSC200": "BSC200",
+    "BSC200S": "BSC200S", "BSC300": "BSC300", "BSC300T": "BSC300T",
+    "BSC500": "BSC500", "iGS800": "iGS800",
 }
 
 

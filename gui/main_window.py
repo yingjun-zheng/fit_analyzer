@@ -22,9 +22,9 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSplitter,
     QStackedWidget,
-    QSystemTrayIcon,
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -134,7 +134,6 @@ class MainWindow(QMainWindow):
         self.resize(1280, 820)
 
         self._build_ui()
-        self._build_tray()
         self.load_months()
 
     # ---------------- UI 构建 ----------------
@@ -153,9 +152,13 @@ class MainWindow(QMainWindow):
         act_logs.triggered.connect(self.open_logs)
         act_dir = QAction("数据目录", self)
         act_dir.triggered.connect(self.open_data_dir)
+        act_export = QAction("📤 导出 GPX", self)
+        act_export.triggered.connect(self.export_gpx)
 
         tb.addAction(act_import)
         tb.addAction(act_refresh)
+        tb.addSeparator()
+        tb.addAction(act_export)
         tb.addSeparator()
         tb.addAction(act_settings)
         tb.addAction(act_logs)
@@ -506,39 +509,9 @@ class MainWindow(QMainWindow):
 
         return tabs
 
-    # ---------------- 托盘 ----------------
-    def _build_tray(self):
-        from PySide6.QtWidgets import QMenu
-
-        self.tray = QSystemTrayIcon(QIcon(make_app_icon()), self)
-        self.tray.setToolTip(self.windowTitle())
-        menu = QMenu()
-        act_show = menu.addAction("打开主界面")
-        act_show.triggered.connect(self._show_main)
-        act_dir = menu.addAction("数据目录")
-        act_dir.triggered.connect(self.open_data_dir)
-        menu.addSeparator()
-        act_quit = menu.addAction("退出")
-        act_quit.triggered.connect(QApplication.instance().quit)
-        self.tray.setContextMenu(menu)
-        self.tray.activated.connect(self._on_tray_activated)
-        self.tray.show()
-
-    def _show_main(self):
-        self.showNormal()
-        self.raise_()
-        self.activateWindow()
-
-    def _on_tray_activated(self, reason):
-        if reason == QSystemTrayIcon.Trigger:
-            self._show_main()
-
     def closeEvent(self, e):
-        """关闭窗口时隐藏到托盘，不退出。"""
-        e.ignore()
-        self.hide()
-        self.tray.showMessage(self.windowTitle(), "程序仍在后台运行，可通过托盘图标打开或退出。",
-                              QSystemTrayIcon.Information, 2500)
+        """关闭窗口即退出。"""
+        QApplication.instance().quit()
 
     # ---------------- 数据加载 ----------------
     def load_months(self):
@@ -672,10 +645,10 @@ class MainWindow(QMainWindow):
         self._clear_layout(self.mv_dist_holder)
         self._clear_layout(self.mv_count_holder)
         if months:
-            self.mv_dist_holder.addWidget(ch.bar_chart(
+            self.mv_dist_holder.addWidget(ch.line_chart_cat(
                 "各月里程 (km)", [m0["month"] for m0 in months],
                 [m0["distance_km"] for m0 in months], "#1e88e5", "km", 260, "%.1f"))
-            self.mv_count_holder.addWidget(ch.bar_chart(
+            self.mv_count_holder.addWidget(ch.line_chart_cat(
                 "各月骑行次数", [m0["month"] for m0 in months],
                 [m0["count"] for m0 in months], "#43a047", "次", 260, "%.0f"))
 
@@ -766,7 +739,7 @@ class MainWindow(QMainWindow):
         if km_data:
             cats = [str(p["km"] + 1) if (p["km"] + 1) % 5 == 0 else "" for p in km_data]
             c = self._card()
-            c.layout().addWidget(ch.bar_chart(
+            c.layout().addWidget(ch.line_chart_cat(
                 "每公里平均速度 (km/h)", cats, [p.get("avg_speed_kmh") or 0 for p in km_data],
                 "#1e88e5", "km/h", 300, "%.1f"))
             self.ov_charts.addWidget(c)
@@ -1124,3 +1097,25 @@ class MainWindow(QMainWindow):
             os.startfile(str(self.data_dir))  # noqa: S606  Windows only
         except Exception as e:
             log.warning("打开数据目录失败: %s", e)
+
+    def export_gpx(self):
+        """导出当前活动为 GPX 文件。"""
+        if not self.cur_activity:
+            QMessageBox.information(self, "提示", "请先在左侧选中一条活动记录")
+            return
+        act = self.cur_activity
+        default_name = f"{act.get('start_time','')[:10]}_{act.get('name','骑行')}.gpx"
+        default_name = default_name.replace(" ", "_").replace("/", "-").replace("\\", "-")
+        path, _ = QFileDialog.getSaveFileName(self, "导出 GPX", str(Path.home() / "Desktop" / default_name), "GPX 文件 (*.gpx)")
+        if not path:
+            return
+        try:
+            from core import gpx_export
+            records = self.cur_records if hasattr(self, 'cur_records') else self.db.get_records(act["id"])
+            laps = self.cur_laps if hasattr(self, 'cur_laps') else self.db.get_laps(act["id"])
+            gpx_export.export_gpx(act, records, laps=laps, output_path=path)
+            self.statusBar().showMessage(f"GPX 已导出: {Path(path).name}", 5000)
+            log.info("GPX 导出成功: %s", path)
+        except Exception as e:
+            log.exception("GPX 导出失败")
+            QMessageBox.critical(self, "导出失败", str(e))
