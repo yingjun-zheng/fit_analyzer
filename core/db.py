@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS activities (
     hw_version TEXT,
     sw_version TEXT,
     sport TEXT,
+    sub_sport_cn TEXT,
     start_time TEXT,
     start_ts INTEGER,
     total_distance_m REAL,
@@ -81,6 +82,7 @@ class DB:
             "product_name": "TEXT",
             "hw_version": "TEXT",
             "sw_version": "TEXT",
+            "sub_sport_cn": "TEXT",
         }
         for col, typ in adds.items():
             if col not in cols:
@@ -102,13 +104,13 @@ class DB:
         self.conn.execute(
             """INSERT INTO activities (
                 file_hash, file_name, name, device, device_brand, product, product_name, hw_version, sw_version,
-                sport, start_time, start_ts,
+                sport, sub_sport_cn, start_time, start_ts,
                 total_distance_m, timer_s, elapsed_s, moving_s,
                 avg_speed_ms, max_speed_ms, avg_hr, max_hr, min_hr,
                 avg_cad, max_cad, calories, ascent_m, descent_m,
                 avg_alt_m, max_alt_m, min_alt_m, avg_temp, max_temp, min_temp,
                 lat, lon, record_count, imported_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(file_hash) DO UPDATE SET
                 file_name=excluded.file_name, name=excluded.name,
                 device=excluded.device, device_brand=excluded.device_brand,
@@ -126,7 +128,7 @@ class DB:
                 data["file_hash"], data["file_name"], data["name"], data["device"],
                 data.get("device_brand", ""), data.get("product"), data.get("product_name", ""),
                 data.get("hw_version", ""), data.get("sw_version", ""),
-                data["sport"], data["start_time"], data["start_ts"],
+                data["sport"], data.get("sub_sport_cn", ""), data["start_time"], data["start_ts"],
                 s["total_distance_m"], s["timer_s"], s["elapsed_s"], s["moving_s"],
                 s["avg_speed_ms"], s["max_speed_ms"], s["avg_hr"], s["max_hr"], s["min_hr"],
                 s["avg_cad"], s["max_cad"], s["calories"], s["ascent_m"], s["descent_m"],

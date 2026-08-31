@@ -194,3 +194,80 @@ def moving_time(records):
                     dt = max(0.0, nxt - cur)
             mt += dt
     return mt
+
+
+def estimate_power(records, config=None):
+    """从速度/海拔/加速度估算功率（无功率计时使用）。
+
+    基于物理模型：P = (F_roll + F_air + F_gravity + F_accel) × v
+    - F_roll  = Crr × m × g
+    - F_air   = 0.5 × ρ × CdA × v²
+    - F_gravity = m × g × grade（用 5 点平滑海拔差 / 水平距离）
+    - F_accel = m × a（用 5 点平滑速度差，clamp ±1.5 m/s²）
+
+    参数从 config 读取（默认值可覆盖）；返回 list[dict] 同 records 结构，附加 power 字段。
+    如果 records 已有功率计数据，直接返回原数据。
+    """
+    # 如果已有功率计数据，不估算
+    if any(r.get("power") is not None for r in records):
+        return records
+
+    # 读取配置参数
+    rider_kg = float(config.get("power_rider_weight_kg", 70.0)) if config else 70.0
+    bike_kg = float(config.get("power_bike_weight_kg", 10.0)) if config else 10.0
+    crr = float(config.get("power_crr", 0.005)) if config else 0.005
+    cda = float(config.get("power_cda", 0.35)) if config else 0.35
+    rho = float(config.get("power_air_density", 1.225)) if config else 1.225
+
+    total_mass = rider_kg + bike_kg
+    g = 9.80665
+
+    # 平滑海拔：5 点滑动窗口
+    W = 5
+    def _smooth(key, n=W):
+        out = []
+        for i in range(len(records)):
+            win = records[max(0, i - n + 1):i + 1]
+            vals = [r.get(key) for r in win if r.get(key) is not None]
+            out.append(sum(vals) / len(vals) if vals else None)
+        return out
+
+    smooth_alt = _smooth("alt_m", 5)
+    smooth_speed = _smooth("speed_ms", 5)
+
+    result = []
+    prev = None
+    for i, r in enumerate(records):
+        r2 = dict(r)
+        speed = smooth_speed[i] or 0.0
+        alt = smooth_alt[i]
+
+        # 坡度：5 点平滑海拔差 / 水平距离
+        grade = 0.0
+        if alt is not None and i >= W and smooth_alt[i - W] is not None:
+            h_dist = (r.get("dist_m") or 0) - (records[i - W].get("dist_m") or 0)
+            if h_dist and h_dist > 1.0:
+                grade = (alt - smooth_alt[i - W]) / h_dist
+                grade = max(-0.25, min(0.25, grade))
+
+        theta = math.atan(grade) if abs(grade) > 0.0005 else 0.0
+
+        f_roll = crr * total_mass * g * math.cos(theta)
+        f_air = 0.5 * rho * cda * speed * speed
+        f_gravity = total_mass * g * math.sin(theta)
+
+        # 加速度：5 点平滑速度差
+        f_accel = 0.0
+        if i >= W and smooth_speed[i - W] is not None:
+            dt = (r.get("t") or 0) - (records[i - W].get("t") or 0)
+            if dt > 0:
+                a = (speed - smooth_speed[i - W]) / dt
+                a = max(-1.5, min(1.5, a))
+                f_accel = total_mass * a
+
+        power = (f_roll + f_air + f_gravity + f_accel) * speed
+        r2["power"] = round(max(0.0, power))
+        result.append(r2)
+        prev = r2
+
+    return result

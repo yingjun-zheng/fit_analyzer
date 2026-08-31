@@ -22,6 +22,12 @@ DEFAULTS = {
     "track_max_points": 2000,
     # 设备型号表（用户可扩展）：{"厂商/产品码": "型号名"}，如 {"bryton/1801": "百锐腾 Rider 15"}
     "device_models": {},
+    # ---- 功率估算 ----
+    "power_rider_weight_kg": 70.0,   # 骑手体重(kg)
+    "power_bike_weight_kg": 10.0,    # 自行车重量(kg)
+    "power_crr": 0.005,              # 滚动阻力系数（公路车胎≈0.005）
+    "power_cda": 0.35,               # 风阻面积(m²)（非气动姿势≈0.35）
+    "power_air_density": 1.225,      # 空气密度(kg/m³)（海平面≈1.225）
     # ---- 高德地图（在线轨迹地图，可选） ----
     # amap_key 须为「Web端(JS API)」类型；amap_security 为对应的安全密钥(securityJsCode)
     "amap_key": "",

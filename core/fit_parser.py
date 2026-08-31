@@ -379,6 +379,15 @@ def parse_fit_file(path: Path):
     sport = sget("sport") or "cycling"
     sub_sport = sget("sub_sport") or ""
 
+    # sub_sport 中文翻译
+    SUB_SPORT_CN = {
+        "generic": "通用", "road": "公路骑行", "mountain": "山地骑行",
+        "gravel": "砾石骑行", "cyclocross": "公路越野", "commuting": "通勤",
+        "touring": "长途骑行", "track": "场地骑行", "indoor_cycling": "室内骑行",
+        "virtual_ride": "虚拟骑行", "e_bike": "电助力",
+    }
+    sub_sport_cn = SUB_SPORT_CN.get(str(sub_sport).lower(), str(sub_sport)) if sub_sport else ""
+
     manufacturer = file_id.get("manufacturer")
     product = file_id.get("product")
     product_name = file_id.get("product_name")
@@ -442,6 +451,7 @@ def parse_fit_file(path: Path):
         "sw_version": str(sw_version) if sw_version is not None else "",
         "sport": sport,
         "sub_sport": sub_sport,
+        "sub_sport_cn": sub_sport_cn,
         "start_time": start_display,
         "start_ts": int(start_ts),
         "name": f"{display_dt.strftime('%Y-%m-%d')} 骑行",

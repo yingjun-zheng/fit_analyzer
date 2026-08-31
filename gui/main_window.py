@@ -692,6 +692,8 @@ class MainWindow(QMainWindow):
             ("最大心率", f"{round(a['max_hr'])} bpm" if a.get("max_hr") is not None else "—"),
             ("最大踏频", f"{round(a['max_cad'])} rpm" if a.get("max_cad") is not None else "—"),
             ("平均温度", f"{a['avg_temp']} °C" if a.get("avg_temp") is not None else "—"),
+            ("平均功率", f"{a['avg_power']} W" if a.get("avg_power") is not None else "—"),
+            ("最大功率", f"{a['max_power']} W" if a.get("max_power") is not None else "—"),
             ("设备", a.get("device") or "—"),
         ]
 
@@ -701,6 +703,13 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "提示", "活动不存在")
             return
         records = self.db.get_records(aid)
+        # 功率估算（无功率计时自动估算）
+        records = analysis.estimate_power(records, self.config)
+        # 计算平均/最大功率
+        powers = [r["power"] for r in records if r.get("power") is not None]
+        if powers:
+            act["avg_power"] = round(sum(powers) / len(powers))
+            act["max_power"] = max(powers)
         self.cur_records = records
         laps = self.db.get_laps(aid)
         self.cur_activity = act
@@ -728,6 +737,7 @@ class MainWindow(QMainWindow):
                 "hr": analysis.downsample_series(records, "hr", 500),
                 "cad": analysis.downsample_series(records, "cad", 500),
                 "alt": analysis.downsample_series(records, "alt_m", 500),
+                "power": analysis.downsample_series(records, "power", 500),
             },
             "track": analysis.track_points(records, self.config.get("track_max_points")),
         }
@@ -771,6 +781,15 @@ class MainWindow(QMainWindow):
                 f"设备温度 (°C) · 平均{t['avg']} 最高{t['max']} 最低{t['min']}",
                 [p["t"] for p in t["series"]], [p["v"] for p in t["series"]],
                 "#00acc1", "°C", 260, "%.1f"))
+            self.ov_charts.addWidget(c)
+        power_pts = series.get("power") or []
+        if power_pts:
+            xs = [p["t"] for p in power_pts]
+            ys = [p["v"] for p in power_pts]
+            has_native = any(r.get("power") is not None for r in records)
+            label = "功率 (W) — 时间" if has_native else "估算功率 (W) — 时间"
+            c = self._card()
+            c.layout().addWidget(ch.line_chart_time(label, xs, ys, "#f57c00", "W", 320, "%.0f"))
             self.ov_charts.addWidget(c)
 
         # 区间统计（Web 式自适应；短标签）
@@ -845,7 +864,7 @@ class MainWindow(QMainWindow):
         self._clear_layout(self.det_grid)
         details = self.stat_values(act)
         details += [
-            ("运动类型", f"{act.get('sport') or '—'} / {act.get('sub_sport') or ''}"),
+            ("运动类型", act.get("sub_sport_cn") or act.get("sub_sport") or "骑行"),
             ("移动时间", fmt_duration(act.get("moving_s"))),
             ("记录点数", f"{act.get('record_count')} 个"),
             ("文件名", act.get("file_name") or "—"),
@@ -1111,7 +1130,7 @@ class MainWindow(QMainWindow):
             return
         try:
             from core import gpx_export
-            records = self.cur_records if hasattr(self, 'cur_records') else self.db.get_records(act["id"])
+            records = self.cur_records if hasattr(self, 'cur_records') else analysis.estimate_power(self.db.get_records(act["id"]), self.config)
             laps = self.cur_laps if hasattr(self, 'cur_laps') else self.db.get_laps(act["id"])
             gpx_export.export_gpx(act, records, laps=laps, output_path=path)
             self.statusBar().showMessage(f"GPX 已导出: {Path(path).name}", 5000)
