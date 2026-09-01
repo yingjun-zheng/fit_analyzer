@@ -19,6 +19,14 @@ _WEBENGINE_IMPORTS = [
     "PySide6.QtWebChannel",
 ]
 
+# 复盘 agent 等动态 import 的模块，PyInstaller 扫描不到，需显式声明
+_CORE_IMPORTS = [
+    "core.review_agent",
+    "core.compare",
+    "core.training_load",
+    "core.fitness",
+]
+
 onefile = os.environ.get("CRP_ONEFILE") == "1"
 
 a = Analysis(
@@ -26,7 +34,7 @@ a = Analysis(
     pathex=[str(ROOT)],
     binaries=[],
     datas=DATAS,
-    hiddenimports=_WEBENGINE_IMPORTS,
+    hiddenimports=_WEBENGINE_IMPORTS + _CORE_IMPORTS,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

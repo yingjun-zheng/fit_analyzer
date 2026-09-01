@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from core import ai_analysis, ai_client, analysis, fit_parser, logging_setup, month_agent, nl_query
+from core import ai_analysis, ai_client, analysis, fit_parser, logging_setup, month_agent
 from core.config import Config
 from core.db import DB
 from gui import charts as ch
@@ -154,11 +154,14 @@ class MainWindow(QMainWindow):
         act_dir.triggered.connect(self.open_data_dir)
         act_export = QAction("📤 导出 GPX", self)
         act_export.triggered.connect(self.export_gpx)
+        act_route = QAction("🗺 导入路书", self)
+        act_route.triggered.connect(self.open_route)
 
         tb.addAction(act_import)
         tb.addAction(act_refresh)
         tb.addSeparator()
         tb.addAction(act_export)
+        tb.addAction(act_route)
         tb.addSeparator()
         tb.addAction(act_settings)
         tb.addAction(act_logs)
@@ -398,7 +401,10 @@ class MainWindow(QMainWindow):
         """从背景图集中随机选一张。"""
         if self.backgrounds:
             return random.choice(self.backgrounds)
-        return ""
+        # 回退：用 app.py 的 resource_path 定位 back9.jpeg
+        from app import resource_path
+        fb = resource_path("back9.jpeg")
+        return str(fb) if fb.exists() else ""
 
     def _build_activity_page(self):
         tabs = QTabWidget()
@@ -470,25 +476,26 @@ class MainWindow(QMainWindow):
         ai_lay = QVBoxLayout(ai_page)
         ai_lay.setContentsMargins(12, 12, 12, 12)
 
-        # 自然语言查询（工具调用 Agent 原型）
-        nl_label = QLabel("自然语言查询（LLM 自动选择分析工具）")
-        nl_label.setObjectName("h3")
-        ai_lay.addWidget(nl_label)
-        nl_in_row = QHBoxLayout()
-        self.nl_input = QLineEdit()
-        self.nl_input.setPlaceholderText("用自然语言提问，例如：这次爬坡多吗？第 5 公里配速如何？心率区间分布？")
-        self.nl_input.returnPressed.connect(self.nl_query)
-        self.nl_btn = QPushButton("🔍 智能查询")
-        self.nl_btn.setObjectName("primary")
-        self.nl_btn.clicked.connect(self.nl_query)
-        nl_in_row.addWidget(self.nl_input, 1)
-        nl_in_row.addWidget(self.nl_btn)
-        ai_lay.addLayout(nl_in_row)
-        self.nl_text = QTextEdit()
-        self.nl_text.setReadOnly(True)
-        self.nl_text.setPlaceholderText("在这里查看「模型选择了哪些工具 → 结果 → 最终回答」。")
-        self.nl_text.setMinimumHeight(160)
-        ai_lay.addWidget(self.nl_text, 2)
+        # 智能复盘（统一入口：自动路由到单次/周期/对比/训练负荷/体能分析）
+        rv_label = QLabel("智能复盘（一句话触发，自动判断分析类型）")
+        rv_label.setObjectName("h3")
+        ai_lay.addWidget(rv_label)
+        rv_in_row = QHBoxLayout()
+        self.rv_input = QLineEdit()
+        self.rv_input.setPlaceholderText(
+            "例：帮我复盘上周 · 和上次比有没有进步 · 这周该不该休息 · 我体能进步了吗 · 这次爬坡多吗")
+        self.rv_input.returnPressed.connect(self.review_query)
+        self.rv_btn = QPushButton("🧭 智能复盘")
+        self.rv_btn.setObjectName("primary")
+        self.rv_btn.clicked.connect(self.review_query)
+        rv_in_row.addWidget(self.rv_input, 1)
+        rv_in_row.addWidget(self.rv_btn)
+        ai_lay.addLayout(rv_in_row)
+        self.rv_text = QTextEdit()
+        self.rv_text.setReadOnly(True)
+        self.rv_text.setPlaceholderText("在这里查看复盘结果（自动路由 + 教练解读）。")
+        self.rv_text.setMinimumHeight(160)
+        ai_lay.addWidget(self.rv_text, 3)
 
         # 传统报告生成
         btn_row = QHBoxLayout()
@@ -986,52 +993,44 @@ class MainWindow(QMainWindow):
         else:
             self.ai_text.setPlainText(f"连接失败：{payload.get('error')}")
 
-    # ---------------- 自然语言查询（工具调用 Agent） ----------------
-    def nl_query(self):
+    # ---------------- 智能复盘（统一路由 Agent） ----------------
+    def review_query(self):
+        """智能复盘入口：一句话触发，自动路由到单次/周期/对比/训练负荷/体能。"""
         if not self.config.get("ai_enabled"):
             QMessageBox.information(self, "提示", "请先在「设置」中启用并配置 AI")
             return
-        if not self.cur_activity:
-            return
-        q = self.nl_input.text().strip()
+        q = self.rv_input.text().strip()
         if not q:
             return
-        self.nl_btn.setEnabled(False)
-        self.nl_text.setPlainText("思考中…（LLM 正在选择并调用分析工具）")
-        self._run_worker(self._do_nl_query, self._on_nl_done, q)
+        self.rv_btn.setEnabled(False)
+        self.rv_text.setPlainText("复盘分析中…（正在判断分析类型并调用数据）")
+        self._run_worker(self._do_review, self._on_review_done, q)
 
-    def _do_nl_query(self, q):
-        from core import nl_query
+    def _do_review(self, q):
+        from core import review_agent
 
-        return nl_query.run_nl_query(
-            self._ai_client(), self.cur_activity, self.cur_records,
-            self.config, q, laps=self.cur_laps, max_rounds=5)
+        return review_agent.run_review(
+            self._ai_client(), self.db, self.config, q,
+            current_activity=self.cur_activity)
 
-    def _on_nl_done(self, ok, payload):
-        self.nl_btn.setEnabled(True)
+    def _on_review_done(self, ok, payload):
+        self.rv_btn.setEnabled(True)
         if not ok:
-            self.nl_text.setPlainText(f"错误：{payload}")
+            self.rv_text.setPlainText(f"错误：{payload}")
             return
-        steps = payload.get("steps") or []
-        lines = []
-        if steps:
-            lines.append("【工具调用链路】")
-            for i, s in enumerate(steps, 1):
-                status = "✅" if s.get("ok") else "❌"
-                args = s.get("args") or {}
-                arg_s = " ".join(f"{k}={v}" for k, v in args.items()) if args else ""
-                lines.append(f"  {i}. {status} {s['tool']}({arg_s})")
-            lines.append("")
-        if payload.get("fallback"):
-            lines.append("（注：当前模型不支持工具调用，已自动降级为预计算摘要 + 单次问答）\n")
-        thinking = (payload.get("thinking") or "").strip()
-        if thinking:
-            lines.append("【思考过程】")
-            lines.append(thinking)
-            lines.append("")
-        lines.append("【回答】")
-        lines.append(payload.get("answer") or "（模型未返回内容）")
-        self.nl_text.setPlainText("\n".join(lines))
+        if not isinstance(payload, dict):
+            self.rv_text.setPlainText(str(payload))
+            return
+        intent = payload.get("intent") or "single"
+        intent_cn = {"single": "单次复盘", "period": "周期复盘", "compare": "对比复盘",
+                     "load": "训练负荷", "fitness": "体能分析"}.get(intent, intent)
+        lines = [f"【复盘类型】{intent_cn}", ""]
+        answer = (payload.get("answer") or "").strip()
+        if not answer:
+            answer = "（未返回内容）"
+        lines.append("【结论】")
+        lines.append(answer)
+        self.rv_text.setPlainText("\n".join(lines))
 
     # ---------------- 左侧 AI 对话面板（统一入口） ----------------
     def ai_chat_ask(self):
@@ -1138,3 +1137,9 @@ class MainWindow(QMainWindow):
         except Exception as e:
             log.exception("GPX 导出失败")
             QMessageBox.critical(self, "导出失败", str(e))
+
+    def open_route(self):
+        """打开路书分析对话框。"""
+        from gui.route_dialog import RouteDialog
+        dlg = RouteDialog(self)
+        dlg.exec()

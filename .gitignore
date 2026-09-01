@@ -8,6 +8,7 @@ __pycache__/
 build/icon.ico
 dist/
 build/骑行FIT数据分析器/
+build/fit_analyzer/
 
 # 本地数据
 data/

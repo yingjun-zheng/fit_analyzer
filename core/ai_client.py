@@ -25,12 +25,15 @@ def normalize_base_url(base_url):
 
 
 class AIClient:
-    def __init__(self, base_url, api_key="", model="", temperature=0.4, timeout=120):
+    def __init__(self, base_url, api_key="", model="", temperature=0.4, timeout=120, reasoning_effort=None):
         self.base_url = normalize_base_url(base_url)
         self.api_key = api_key or ""
         self.model = model or ""
         self.temperature = temperature
         self.timeout = timeout
+        # 实例级默认推理强度（DeepSeek/o 系列）；None=用后端默认。
+        # 设置成 "low" 可避免 reasoning 模型把 max_tokens 全耗在思维链上导致 content 为空。
+        self.reasoning_effort = reasoning_effort
 
     def _headers(self):
         h = {}
@@ -38,16 +41,20 @@ class AIClient:
             h["Authorization"] = f"Bearer {self.api_key}"
         return h
 
-    def chat(self, messages, model=None, temperature=None, timeout=None):
-        """发送对话，返回回复文本（content 为空时回退 reasoning）。"""
-        r = self.chat_full(messages, model=model, temperature=temperature, timeout=timeout)
-        return r["content"] or r["reasoning"] or ""
+    def chat(self, messages, model=None, temperature=None, timeout=None, max_tokens=None, reasoning_effort=None):
+        """发送对话，返回回复文本。content 为空时不再回退 reasoning（那是内部思维链，不对外暴露）。"""
+        r = self.chat_full(messages, model=model, temperature=temperature, timeout=timeout, max_tokens=max_tokens, reasoning_effort=reasoning_effort)
+        return r["content"] or ""
 
-    def chat_full(self, messages, model=None, temperature=None, timeout=None, tools=None):
+    def chat_full(self, messages, model=None, temperature=None, timeout=None, tools=None, max_tokens=None, reasoning_effort=None):
         """发送对话，返回 {"content": 结论, "reasoning": 思考过程, "tool_calls": [...]}。
 
         tools: OpenAI function-calling 工具列表（非空时启用工具调用，兼容 Ollama / DeepSeek / OpenAI）。
         tool_calls 中每一项为 {"id", "name", "arguments": <已解析为 dict>}。
+        max_tokens: 若不传，默认 4096（兼容思考模型）；纯文本解读场景建议传较小值（如 800-1500），
+                    避免 reasoning 模型陷入过长思维链导致超时。
+        reasoning_effort: DeepSeek/o 系列推理强度（low/medium/high），传给后端减少思维链占用，
+                          让 content 有足够 token 生成；不传则用后端默认。
         """
         if not self.base_url:
             raise AIError("未配置 AI 服务地址（设置 → AI）")
@@ -57,8 +64,12 @@ class AIClient:
             "messages": messages,
             "temperature": self.temperature if temperature is None else temperature,
             "stream": False,
-            "max_tokens": 4096,  # 推理模型（qwen3.5 等）思考 + 结论都容纳，避免截断
+            "max_tokens": max_tokens if max_tokens is not None else 4096,
         }
+        # 推理强度：参数未传时用实例级默认，都无则不发（用后端默认）
+        eff = reasoning_effort or self.reasoning_effort
+        if eff:
+            payload["reasoning_effort"] = eff
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
