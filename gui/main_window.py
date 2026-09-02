@@ -154,9 +154,8 @@ class MainWindow(QMainWindow):
         act_dir.triggered.connect(self.open_data_dir)
         act_export = QAction("📤 导出 GPX", self)
         act_export.triggered.connect(self.export_gpx)
-        # 「导入路书」暂隐藏——路径规划（阶段三）上线后再启用，届时路书可存入数据库复用。
-        # act_route = QAction("🗺 导入路书", self)
-        # act_route.triggered.connect(self.open_route)
+        act_plan = QAction("🧭 路径规划", self)
+        act_plan.triggered.connect(self.open_plan)
         act_to_route = QAction("🔁 转路书", self)
         act_to_route.triggered.connect(self.export_route)
         # 删除选中（批量）
@@ -168,7 +167,7 @@ class MainWindow(QMainWindow):
         tb.addAction(act_delete)
         tb.addSeparator()
         tb.addAction(act_export)
-        # tb.addAction(act_route)
+        tb.addAction(act_plan)
         tb.addAction(act_to_route)
         tb.addSeparator()
         tb.addAction(act_settings)
@@ -1204,6 +1203,13 @@ class MainWindow(QMainWindow):
         from gui.route_dialog import RouteDialog
         dlg = RouteDialog(self, ai_client_factory=self._ai_client,
                           ai_enabled=self.config.get("ai_enabled"))
+        dlg.exec()
+
+    def open_plan(self):
+        """打开路径规划对话框（地图点击选点）。"""
+        from gui.route_plan_map import PlanDialog
+        dlg = PlanDialog(self.config, ai_client_factory=self._ai_client,
+                         ai_enabled=self.config.get("ai_enabled"), parent=self)
         dlg.exec()
 
     def export_route(self):

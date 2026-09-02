@@ -104,6 +104,18 @@ class SettingsDialog(QDialog):
         amap_tip.setWordWrap(True)
         form.addRow(amap_tip)
 
+        # 高德路径规划（Web服务 Key，与上面的 JS API Key 是不同类型）
+        plan_title = QLabel("高德路径规划（可选）")
+        plan_title.setObjectName("h3")
+        form.addRow(plan_title)
+        self.edAmapWebKey = QLineEdit(d.get("amap_web_key") or "")
+        self.edAmapWebKey.setPlaceholderText("高德开放平台申请的 Web服务 Key（用于骑行路径规划）")
+        form.addRow("Web服务 Key", self.edAmapWebKey)
+        plan_tip = QLabel("注意：此 Key 与上方「高德 Key(JS API)」是不同类型，需在高德控制台单独申请「Web服务」类型。")
+        plan_tip.setObjectName("muted")
+        plan_tip.setWordWrap(True)
+        form.addRow(plan_tip)
+
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.button(QDialogButtonBox.Ok).setText("保存")
         buttons.button(QDialogButtonBox.Cancel).setText("取消")
@@ -164,6 +176,7 @@ class SettingsDialog(QDialog):
             "device_models": device_models,
             "amap_key": self.edAmapKey.text().strip(),
             "amap_security": self.edAmapSec.text().strip(),
+            "amap_web_key": self.edAmapWebKey.text().strip(),
         })
         self.accept()
 

@@ -34,9 +34,12 @@ DEFAULTS = {
     # amap_key 须为「Web端(JS API)」类型；amap_security 为对应的安全密钥(securityJsCode)
     "amap_key": "",
     "amap_security": "",
+    # ---- 高德路径规划（可选） ----
+    # amap_web_key 须为「Web服务」类型（不同于上面的 JS API key），用于骑行路径规划
+    "amap_web_key": "",
 }
 
-_SENSITIVE = {"ai_api_key", "amap_security"}
+_SENSITIVE = {"ai_api_key", "amap_security", "amap_web_key"}
 
 
 class Config:
