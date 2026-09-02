@@ -8,6 +8,9 @@
 - **记圈（赛段）数据详情**、**活动详情全部字段**
 - **运动轨迹图**：高德在线地图（可选）或固定背景图片 + 轨迹叠加（起终点标记、海拔范围）
 - **按月汇总统计**：各月次数/里程/用时/爬升/消耗，跨月折线图
+- **训练负荷趋势**：月度视图展示 CTL（体能）/ ATL（疲劳）/ TSB（状态）三线图，全量数据按日历天连续衰减
+- **路书分析**：历史活动一键转路书、GPX 路书导入，海拔剖面爬坡段高亮（Cat4~HC 五色分级）、AI 解读路书难度
+- **路径规划**：高德地图交互式选点（行者风格），途经点串联生成合理骑行路线，可转路书分析（需高德「Web服务」Key）
 - **AI 数据分析**：接入本地 AI（Ollama / LM Studio / vLLM）或任意 OpenAI 兼容远程模型（DeepSeek 等，用自己的 Key），生成单次活动分析报告与月度训练总结
 - **GPX 导出**：单条活动导出为 GPX 1.1 格式（含 Garmin TrackPointExtension 扩展：心率/踏频/温度/速度/功率），兼容 Strava / Garmin Connect / 行者等平台
 - 内置**日志系统**（滚动文件 + 界面实时查看）
@@ -84,6 +87,29 @@ ReAct Agent，无 LLM 时纯计算层（对比/负荷/体能）也能独立产�
 > 接入推理模型（DeepSeek-R1 / 类 o 系列）时，若回复为空或超时，通常是因为模型把 token 都用在了
 > 思考链上——代码会传 `reasoning_effort=low` 规避，多数情况下无需手动干预。
 
+## 路书分析（爬坡分级 + AI 解读）
+
+工具栏「🔁 转路书」把当前选中的历史活动转成路书，或「📤 导出 GPX」旁的「路书」入口导入 GPX 路书文件。路书对话框提供：
+
+- **海拔剖面**：沿距离的海拔曲线，叠加爬坡段彩色色带高亮（Cat4 → HC 五级，按坡度/长度分级）
+- **爬坡分级列表**：识别连续爬坡段，标注等级、长度、平均坡度、累计爬升
+- **AI 解读**：调 LLM 输出难度评级、爬坡点评、补给建议
+- **导出**：路书可导出为 GPX 继续在其他平台使用
+
+> 海拔缺失的 GPX（仅坐标无海拔）会通过联网（Open-Meteo）自动补全海拔，用于爬坡分析；离线则静默降级。
+
+## 路径规划（高德地图交互选点）
+
+工具栏「🧭 路径规划」打开地图交互式路径规划（参照行者路书体验）：
+
+1. 在左侧高德地图上**点击添加途经点**（带数字序号标记），右侧列表实时同步
+2. 途径点之间由高德骑行规划（逐段规划拼接），避免起终点间的"火箭直线"，保证走实际骑行道路
+3. 点「规划路线」生成路线并渲染在地图上；点「转路书分析」复用路书对话框（海拔/爬坡/AI/导出）
+
+**依赖配置**：需在「设置 → 高德路径规划」填入高德「**Web服务**」类型 Key（不同于轨迹页的「Web端 JS API」Key，是高德开放平台申请的另一种 Key）。个人认证每月有数万次免费配额，个人自用足够。
+
+> 坐标纠偏：高德接口返回 GCJ-02（火星坐标），软件内部统一转 WGS-84 存储与导出，避免导出的路书在地图上漂移（300~500 米）。
+
 ## 四、统计口径
 
 - **心率区间**：按最大心率百分比 5 区（默认 60/70/80/90%），最大心率取数据内最大值或手动覆盖；无心率数据的活动自动隐藏心率分析
@@ -113,6 +139,14 @@ ReAct Agent，无 LLM 时纯计算层（对比/负荷/体能）也能独立产�
 
 ## 七、重新打包 EXE
 
+**推荐：一键打包脚本**（自动清理旧产物 → 打包 → 产出正式名 exe）：
+
+```powershell
+.\.venv\Scripts\python.exe build\pack.py
+```
+
+备选：原 PowerShell 脚本
+
 ```powershell
 powershell -ExecutionPolicy Bypass -File build\build_exe.ps1        # 目录版
 powershell -ExecutionPolicy Bypass -File build\build_exe.ps1 -OneFile
@@ -128,24 +162,31 @@ powershell -ExecutionPolicy Bypass -File build\build_exe.ps1 -OneFile
 fit_analyzer/
 ├── app.py                # 入口（PySide6；含 --selftest 离屏自检）
 ├── gui/
-│   ├── main_window.py    # 主窗口：月份-活动树 / 月度汇总 / 活动详情标签页
-│   ├── charts.py         # QtCharts 图表封装（折线/柱状/区间）
+│   ├── main_window.py    # 主窗口：月份-活动树 / 月度汇总（含训练负荷趋势）/ 活动详情标签页
+│   ├── charts.py         # QtCharts 图表封装（折线/柱状/区间/多线/爬坡色带）
 │   ├── track_widget.py   # 轨迹控件（固定背景图 + 轨迹）
 │   ├── amap_track.py     # TrackMapPanel：高德在线地图 / 图片背景 自动切换
+│   ├── route_dialog.py   # 路书分析对话框（海拔剖面 + 爬坡分级 + AI 解读 + 导出）
+│   ├── route_plan_map.py # 路径规划对话框（高德地图交互选点，QWebEngineView）
 │   ├── dialogs.py        # 设置 / 日志对话框
 │   └── theme.py          # 样式与格式化
 ├── core/
 │   ├── fit_parser.py     # FIT 解析（fitparse，兼容缺字段/缺心率/本地时区）
 │   ├── db.py             # SQLite 存储与月度汇总
 │   ├── analysis.py       # 分公里/区间/曲线/轨迹统计
+│   ├── route.py          # 路书：坐标→里程/海拔剖面/爬坡分级/海拔补全
+│   ├── route_ai.py       # 路书 AI 解读
+│   ├── route_plan.py     # 路径规划：高德骑行规划/途经点串联/GCJ-02→WGS-84 转换
+│   ├── training_load.py  # 训练负荷：TSS/CTL/ATL/TSB（无功率计自动走心率 hrTSS）
 │   ├── gpx_export.py     # GPX 1.1 导出（含心率/踏频/温度/速度/功率扩展）
 │   ├── ai_client.py      # OpenAI 兼容客户端（含模型不存在提示）
 │   ├── ai_analysis.py    # 活动/月度 AI 分析提示词
 │   ├── month_agent.py    # 月度骑行数据查询 Agent（工具调用回答「某月训练」问题）
+│   ├── review_agent.py   # 智能复盘 Agent（意图路由 → 单次/周期/对比/负荷/体能）
 │   └── config.py / logging_setup.py / http_utils.py
 ├── back9.jpeg            # 轨迹背景图
-├── build/                # PyInstaller spec + 打包脚本
-└── tests/smoke_test.py   # 核心冒烟测试（真实数据）
+├── build/                # PyInstaller spec + pack.py 一键打包 + build_exe.ps1
+└── tests/                # 冒烟测试 / 路书 / 路径规划单元测试
 ```
 
 ## 九、已知限制
