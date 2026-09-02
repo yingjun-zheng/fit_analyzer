@@ -389,3 +389,38 @@ def summarize(route):
     else:
         lines.append("无明显爬坡段（多为平路或缓坡）")
     return "\n".join(lines)
+
+
+def route_from_records(name, records):
+    """把数据库活动记录（含 lat/lon/alt_m）转成 route dict（供「历史活动转路书」）。
+
+    records: db.get_records() 返回的 list[dict]，每项含 lat/lon，可选 alt_m。
+    返回与 parse_gpx 相同结构的 route dict（已算海拔剖面与爬坡分级）。
+    """
+    points = []
+    prev = None
+    dist = 0.0
+    for r in records:
+        lat = r.get("lat")
+        lon = r.get("lon")
+        if lat is None or lon is None:
+            continue
+        ele = r.get("alt_m")
+        if prev is not None:
+            dist += _haversine(prev["lat"], prev["lon"], lat, lon)
+        else:
+            dist = 0.0
+        points.append({"lat": lat, "lon": lon, "ele": ele, "dist_km": dist / 1000.0})
+        prev = {"lat": lat, "lon": lon}
+
+    if not points:
+        raise ValueError("该活动没有可用于转路书的轨迹点（缺少经纬度）")
+
+    route = {
+        "name": name or "未命名路书",
+        "points": points,
+        "total_distance_km": round(points[-1]["dist_km"], 2),
+    }
+    _compute_elevation(route)
+    _compute_climbs(route)
+    return route

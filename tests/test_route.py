@@ -146,12 +146,36 @@ def test_enrich_elevation():
     check("补全后累计爬升有值", r.get("total_ascent_m", 0) >= 0)
 
 
+def test_route_from_records():
+    print("== 历史活动转路书 ==")
+    # 构造一条有爬坡的活动记录（lat/lon/alt_m）
+    pts = _climb_route(grad_pct=5.0, length_km=2.0, n=100)
+    records = [
+        {"lat": lat, "lon": lon, "alt_m": ele}
+        for lat, lon, ele in pts
+    ]
+    r = route.route_from_records("活动转路书", records)
+    check("转换后有轨迹点", len(r["points"]) > 0)
+    check("总里程接近 2km", 1.5 < r["total_distance_km"] < 2.5,
+          f"dist={r['total_distance_km']}")
+    check("能识别出爬坡段", len(r.get("climbs", [])) >= 1, f"climbs={len(r.get('climbs', []))}")
+    check("有海拔剖面", len(r["elevation_profile"]) > 0)
+
+    # 无经纬度记录应报错
+    try:
+        route.route_from_records("空", [{"alt_m": 100}, {"alt_m": 105}])
+        check("无轨迹点时报错", False)
+    except ValueError:
+        check("无轨迹点时报错", True)
+
+
 def main():
     test_parse_and_elevation()
     test_climb_detection()
     test_export_roundtrip()
     test_summarize()
     test_enrich_elevation()
+    test_route_from_records()
     print(f"\n结果: {PASS} PASS / {FAIL} FAIL")
     return 0 if FAIL == 0 else 1
 

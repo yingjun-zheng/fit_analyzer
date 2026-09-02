@@ -1,5 +1,6 @@
 """QtCharts 图表封装：折线图 / 柱状图。"""
 from PySide6.QtCharts import (
+    QAreaSeries,
     QBarCategoryAxis,
     QBarSeries,
     QBarSet,
@@ -344,3 +345,138 @@ def zone_text(zones):
         pct = z.get("pct", 0)
         lines.append(f"{label}: {sec:.0f} 秒 ({pct:.1f}%)")
     return "   ".join(lines) if lines else ""
+
+
+def multi_line_chart_cat(title, categories, series_list, y_label="", height=280, fmt="%.0f"):
+    """类别 X 轴多线图：多条折线 + 数据点叠加。
+
+    series_list: [{"name": "CTL", "values": [...], "color": "#1e88e5"}, ...]
+    categories: ["2026-08-01", ...]  X 轴标签
+    """
+    chart = QChart()
+    _style(chart, title)
+
+    # 图例（显示多线名称）
+    chart.legend().setVisible(True)
+    chart.legend().setAlignment(Qt.AlignTop)
+    chart.legend().setFont(QFont("Microsoft YaHei", 8))
+
+    for s in series_list:
+        vals = s["values"]
+        color = s.get("color", "#1e88e5")
+        line = QLineSeries()
+        line.setName(s["name"])
+        line.setPen(QPen(QColor(color), 1.6))
+        for i, v in enumerate(vals):
+            if v is not None:
+                line.append(float(i), float(v))
+        chart.addSeries(line)
+
+        # 数据点标记
+        pts = QScatterSeries()
+        pts.setMarkerSize(4.0)
+        pts.setColor(QColor(color))
+        for i, v in enumerate(vals):
+            if v is not None:
+                pts.append(float(i), float(v))
+        chart.addSeries(pts)
+
+    ax_x = QCategoryAxis()
+    ax_x.setLabelsPosition(QCategoryAxis.AxisLabelsPositionOnValue)
+    ax_x.setLabelsFont(_axis_font())
+    _no_title(ax_x)
+    # 自动精简标签数量（每 95px 一个标签）
+    n = len(categories)
+    if n > 0:
+        for i, cat in enumerate(categories):
+            ax_x.append(cat, float(i))
+    ax_x.setRange(-0.5, float(max(n - 1, 0)) + 0.5)
+
+    ax_y = _y_axis(y_label, fmt)
+    ax_y.setGridLineColor(QColor("#e8e8e8"))
+    ax_y.setTickCount(5)
+
+    chart.addAxis(ax_x, Qt.AlignBottom)
+    chart.addAxis(ax_y, Qt.AlignLeft)
+    for s in chart.series():
+        if isinstance(s, QAreaSeries):
+            continue
+        s.attachAxis(ax_x)
+        s.attachAxis(ax_y)
+    return _view(chart, height, adaptive={"type": "cat", "cats": list(categories)})
+
+
+# 爬坡分级 → 高亮色（Cat4 浅 → HC 深红，对应 Strava 分级的难度递进）
+CLIMB_COLORS = {
+    "Cat 4": "#fbc02d",
+    "Cat 3": "#f9a825",
+    "Cat 2": "#f57c00",
+    "Cat 1": "#e53935",
+    "HC": "#b71c1c",
+}
+
+
+def elevation_chart_with_climbs(title, xs, ys, climbs, color="#1e88e5",
+                                y_label="海拔 (m)", height=300, fmt="%.0f"):
+    """海拔剖面图，并在爬坡段叠加半透明竖直色带高亮。
+
+    xs/ys：沿距离的海拔剖面（与 line_chart 同构）。
+    climbs：route 的 climbs 列表，每项含 start_km/end_km/category。
+    """
+    chart = QChart()
+    _style(chart, title)
+
+    # 1) 海拔折线
+    line = QLineSeries()
+    line.setPen(QPen(QColor(color), 1.6))
+    for x, y in zip(xs, ys):
+        if y is None:
+            continue
+        line.append(float(x), float(y))
+    chart.addSeries(line)
+
+    ax_x = _x_axis_numeric()
+    ax_y = _y_axis(y_label, fmt)
+    chart.addAxis(ax_x, Qt.AlignBottom)
+    chart.addAxis(ax_y, Qt.AlignLeft)
+    line.attachAxis(ax_x)
+    line.attachAxis(ax_y)
+
+    y_min = min((y for y in ys if y is not None), default=0)
+    y_max = max((y for y in ys if y is not None), default=0)
+    if y_max - y_min < 1:
+        y_min -= 5
+        y_max += 5
+
+    # 2) 爬坡段色带：每个爬坡段一条竖直矩形区域（X 轴为爬坡起止距离）
+    for i, c in enumerate(climbs):
+        x0 = c.get("start_km")
+        x1 = c.get("end_km")
+        if x0 is None or x1 is None:
+            continue
+        cat = c.get("category") or ""
+        band_color = CLIMB_COLORS.get(c.get("category_name", ""), CLIMB_COLORS.get(cat, "#f57c00"))
+
+        upper = QLineSeries()
+        lower = QLineSeries()
+        upper.setPen(QPen(Qt.NoPen))
+        lower.setPen(QPen(Qt.NoPen))
+        upper.append(float(x0), float(y_max))
+        upper.append(float(x1), float(y_max))
+        lower.append(float(x0), float(y_min))
+        lower.append(float(x1), float(y_min))
+
+        band = QAreaSeries(upper, lower)
+        band.setName(f"爬坡 {i + 1}")
+        band.setColor(QColor(band_color))
+        band.setBorderColor(QColor(Qt.transparent))
+        band.setOpacity(0.28)
+        chart.addSeries(band)
+        band.attachAxis(ax_x)
+        band.attachAxis(ax_y)
+        # 关键：QAreaSeries 的上下界 QLineSeries 必须保持存活引用，
+        # 否则函数返回后被 GC 回收，QAreaSeries 内部指针悬空，渲染时段错误。
+        band.upperSeriesRef = upper
+        band.lowerSeriesRef = lower
+
+    return _view(chart, height, adaptive={"type": "numeric"})

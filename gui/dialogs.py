@@ -30,9 +30,10 @@ def _parse_float_list(text):
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, config, parent=None):
+    def __init__(self, config, parent=None, on_reidentify=None):
         super().__init__(parent)
         self.config = config
+        self._on_reidentify = on_reidentify
         self.setWindowTitle("设置")
         self.setMinimumWidth(440)
         d = config.public_dict()
@@ -76,6 +77,17 @@ class SettingsDialog(QDialog):
         self.edDevice.setMaximumHeight(110)
         form.addRow("设备型号表（新码表登记）", self.edDevice)
 
+        # 重新识别按钮：改完型号表后点击，立即按新表重算所有活动的型号
+        if on_reidentify is not None:
+            reid_row = QHBoxLayout()
+            reid_btn = QPushButton("🔄 立即按型号表重新识别所有设备")
+            reid_btn.clicked.connect(self._do_reidentify)
+            reid_row.addWidget(reid_btn)
+            reid_row.addStretch(1)
+            reid_tip = QLabel("保存后生效，或点此立即重算。")
+            reid_tip.setObjectName("muted")
+            form.addRow("", reid_row)
+
         # 高德地图（在线轨迹地图，可选）
         amap_title = QLabel("高德地图（在线轨迹地图，可选）")
         amap_title.setObjectName("h3")
@@ -102,6 +114,12 @@ class SettingsDialog(QDialog):
         lay.addLayout(form)
         lay.addWidget(tip)
         lay.addWidget(buttons)
+
+    def _do_reidentify(self):
+        """先保存当前设置（含型号表），再触发主窗口重新识别所有设备。"""
+        self._save()
+        if self._on_reidentify is not None:
+            self._on_reidentify()
 
     def _save(self):
         try:

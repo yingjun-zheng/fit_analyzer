@@ -154,14 +154,22 @@ class MainWindow(QMainWindow):
         act_dir.triggered.connect(self.open_data_dir)
         act_export = QAction("📤 导出 GPX", self)
         act_export.triggered.connect(self.export_gpx)
-        act_route = QAction("🗺 导入路书", self)
-        act_route.triggered.connect(self.open_route)
+        # 「导入路书」暂隐藏——路径规划（阶段三）上线后再启用，届时路书可存入数据库复用。
+        # act_route = QAction("🗺 导入路书", self)
+        # act_route.triggered.connect(self.open_route)
+        act_to_route = QAction("🔁 转路书", self)
+        act_to_route.triggered.connect(self.export_route)
+        # 删除选中（批量）
+        act_delete = QAction("🗑 删除选中", self)
+        act_delete.triggered.connect(self.delete_selected)
 
         tb.addAction(act_import)
         tb.addAction(act_refresh)
+        tb.addAction(act_delete)
         tb.addSeparator()
         tb.addAction(act_export)
-        tb.addAction(act_route)
+        # tb.addAction(act_route)
+        tb.addAction(act_to_route)
         tb.addSeparator()
         tb.addAction(act_settings)
         tb.addAction(act_logs)
@@ -180,15 +188,6 @@ class MainWindow(QMainWindow):
         self.month_tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.month_tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.month_tree.customContextMenuRequested.connect(self._on_tree_context_menu)
-
-        # 删除选中（批量）
-        act_delete = QAction("🗑 删除选中", self)
-        act_delete.triggered.connect(self.delete_selected)
-        tb.addAction(act_delete)
-        # 重新识别设备（设置里改了设备型号表后点这个）
-        act_reid = QAction("🔄 重新识别设备", self)
-        act_reid.triggered.connect(self.reidentify_devices)
-        tb.addAction(act_reid)
 
         self.stack = QStackedWidget()
         self.month_page = self._build_month_page()
@@ -359,6 +358,14 @@ class MainWindow(QMainWindow):
         charts_row.addWidget(c1, 1)
         charts_row.addWidget(c2, 1)
         lay.addLayout(charts_row)
+
+        # 训练负荷趋势图（CTL/ATL/TSB，全量数据）
+        load_card = self._card()
+        load_card.layout().addWidget(QLabel("训练负荷趋势（CTL ↔ 体能 / ATL ↔ 疲劳 / TSB ↔ 状态）"))
+        self.mv_load_holder = QVBoxLayout()
+        self.mv_load_holder.setSpacing(6)
+        load_card.layout().addLayout(self.mv_load_holder)
+        lay.addWidget(load_card)
 
         card = self._card()
         card.layout().addWidget(QLabel("本月活动列表"))
@@ -659,6 +666,10 @@ class MainWindow(QMainWindow):
                 "各月骑行次数", [m0["month"] for m0 in months],
                 [m0["count"] for m0 in months], "#43a047", "次", 260, "%.0f"))
 
+        # 训练负荷趋势（CTL/ATL/TSB，全量数据）
+        self._clear_layout(self.mv_load_holder)
+        self._render_training_load(months)
+
         self.mv_table.setRowCount(len(acts))
         for r, a in enumerate(acts):
             vals = [
@@ -680,6 +691,56 @@ class MainWindow(QMainWindow):
         item = self.mv_table.item(row, 0)
         if item is not None and item.data(Qt.UserRole):
             self.show_activity(item.data(Qt.UserRole))
+
+    def _render_training_load(self, months):
+        """渲染训练负荷趋势图（CTL/ATL/TSB）：全量活动数据计算，跨月展示。"""
+        from core import training_load
+
+        ftp = self.config.get("ftp_w") or None
+        max_hr_override = self.config.get("hr_max_override") or None
+        daily = []
+        for act in self.db.list_activities(limit=200):
+            records = self.db.get_records(act["id"])
+            hrs = [r.get("hr") for r in records if r.get("hr")]
+            mhr = max_hr_override or (max(hrs) if hrs else act.get("max_hr"))
+            tss, _, _, _, _ = training_load.compute_activity_tss(
+                records, config=self.config, ftp=ftp, max_hr=mhr)
+            d = (act.get("start_time") or "")[:10]
+            if tss and d:
+                daily.append((d, tss))
+
+        if not daily:
+            self.mv_load_holder.addWidget(QLabel("暂无训练负荷数据（需要心率或功率数据）。"))
+            return
+
+        daily_sorted = training_load.daily_tss_from_activities(daily)
+        ctls, atls, tsbs, latest = training_load.build_performance_curve(daily_sorted)
+        dates = [d for d, _ in daily_sorted]
+
+        if not dates:
+            return
+
+        ctl_vals = [ctls.get(d) for d in dates]
+        atl_vals = [atls.get(d) for d in dates]
+        tsb_vals = [tsbs.get(d) for d in dates]
+
+        # 精简日期标签（太多时只保留部分）
+        show_dates = dates
+        if len(dates) > 30:
+            step = max(1, len(dates) // 25)
+            show_dates = [dates[i] if i % step == 0 else "" for i in range(len(dates))]
+
+        view = ch.multi_line_chart_cat(
+            "训练负荷趋势（CTL · ATL · TSB）",
+            show_dates,
+            [
+                {"name": "CTL（体能）", "values": ctl_vals, "color": "#1e88e5"},
+                {"name": "ATL（疲劳）", "values": atl_vals, "color": "#e53935"},
+                {"name": "TSB（状态）", "values": tsb_vals, "color": "#43a047"},
+            ],
+            y_label="", height=280, fmt="%.0f",
+        )
+        self.mv_load_holder.addWidget(view)
 
     # ---------------- 活动页 ----------------
     def stat_values(self, a):
@@ -1103,7 +1164,7 @@ class MainWindow(QMainWindow):
 
     # ---------------- 其他 ----------------
     def open_settings(self):
-        dlg = SettingsDialog(self.config, self)
+        dlg = SettingsDialog(self.config, self, on_reidentify=self.reidentify_devices)
         dlg.exec()
 
     def open_logs(self):
@@ -1141,5 +1202,26 @@ class MainWindow(QMainWindow):
     def open_route(self):
         """打开路书分析对话框。"""
         from gui.route_dialog import RouteDialog
-        dlg = RouteDialog(self)
+        dlg = RouteDialog(self, ai_client_factory=self._ai_client,
+                          ai_enabled=self.config.get("ai_enabled"))
+        dlg.exec()
+
+    def export_route(self):
+        """把当前活动一键转成路书：解析轨迹 → 海拔/爬坡分析 → 弹出路书对话框。"""
+        if not self.cur_activity:
+            QMessageBox.information(self, "提示", "请先在左侧选中一条活动记录")
+            return
+        act = self.cur_activity
+        try:
+            from core import route
+            records = self.cur_records if hasattr(self, 'cur_records') else self.db.get_records(act["id"])
+            r = route.route_from_records(act.get("name") or "骑行", records)
+        except Exception as e:
+            QMessageBox.critical(self, "转路书失败", str(e))
+            return
+
+        from gui.route_dialog import RouteDialog
+        dlg = RouteDialog(self, ai_client_factory=self._ai_client,
+                          ai_enabled=self.config.get("ai_enabled"))
+        dlg.load_route(r)
         dlg.exec()

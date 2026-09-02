@@ -1,5 +1,5 @@
-"""路书分析对话框：导入 GPX → 海拔剖面 + 爬坡分级 + 导出。"""
-from PySide6.QtCore import Qt
+"""路书分析对话框：导入 GPX → 海拔剖面（爬坡段高亮）+ 爬坡分级 + AI 解读 + 导出。"""
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QCheckBox, QDialog, QFileDialog, QHBoxLayout, QLabel, QMessageBox,
     QPushButton, QVBoxLayout, QWidget,
@@ -9,12 +9,31 @@ from core import route as route_mod
 from gui import charts as ch
 
 
-class RouteDialog(QDialog):
-    def __init__(self, parent=None):
+class _AnalyzeWorker(QThread):
+    """后台调用 AI 解读路书，避免阻塞 UI。"""
+    done = Signal(object)  # 成功传 str，失败传 None
+
+    def __init__(self, factory, route, question, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("路书分析（GPX 导入 · 爬坡分级）")
-        self.resize(760, 640)
+        self._factory = factory
+        self._route = route
+        self._question = question
+
+    def run(self):
+        from core import route_ai
+        answer = route_ai.analyze_route(self._factory(), self._route, self._question)
+        self.done.emit(answer)
+
+
+class RouteDialog(QDialog):
+    def __init__(self, parent=None, ai_client_factory=None, ai_enabled=False):
+        super().__init__(parent)
+        self.setWindowTitle("路书分析（GPX 导入 · 爬坡分级 · AI 解读）")
+        self.resize(760, 720)
         self._route = None
+        self._ai_factory = ai_client_factory
+        self._ai_enabled = ai_enabled
+        self._worker = None
 
         lay = QVBoxLayout(self)
 
@@ -26,9 +45,13 @@ class RouteDialog(QDialog):
         self.btn_export = QPushButton("📤 导出路书")
         self.btn_export.clicked.connect(self._export)
         self.btn_export.setEnabled(False)
+        self.btn_ai = QPushButton("🤖 AI 解读路书")
+        self.btn_ai.clicked.connect(self._ai_analyze)
+        self.btn_ai.setEnabled(False)
         top.addWidget(self.btn_open)
         top.addWidget(self.chk_enrich)
         top.addStretch(1)
+        top.addWidget(self.btn_ai)
         top.addWidget(self.btn_export)
         lay.addLayout(top)
 
@@ -46,6 +69,20 @@ class RouteDialog(QDialog):
         self.climb_label.setWordWrap(True)
         lay.addWidget(self.climb_label)
 
+        # AI 解读区
+        self.ai_label = QLabel("")
+        self.ai_label.setWordWrap(True)
+        self.ai_label.setTextFormat(Qt.RichText)
+        lay.addWidget(self.ai_label)
+
+    def load_route(self, route):
+        """直接加载一个已解析的 route dict 并渲染（供「历史活动转路书」复用）。"""
+        self._route = route
+        self.btn_export.setEnabled(True)
+        self.btn_ai.setEnabled(bool(self._ai_factory) and self._ai_enabled)
+        self.ai_label.setText("")
+        self._render()
+
     def _open(self):
         path, _ = QFileDialog.getOpenFileName(self, "选择 GPX 路书", "", "GPX 文件 (*.gpx)")
         if not path:
@@ -56,6 +93,8 @@ class RouteDialog(QDialog):
             QMessageBox.critical(self, "导入失败", str(e))
             return
         self.btn_export.setEnabled(True)
+        self.btn_ai.setEnabled(bool(self._ai_factory) and self._ai_enabled)
+        self.ai_label.setText("")
         self._render()
 
     def _render(self):
@@ -66,14 +105,15 @@ class RouteDialog(QDialog):
             f"爬升 {r['total_ascent_m']} m　·　海拔 {r['ele_min_m']}~{r['ele_max_m']} m"
         )
 
-        # 海拔剖面图
+        # 海拔剖面图（含爬坡段色带高亮）
         self._clear_layout(self.chart_container)
         prof = r["elevation_profile"]
         if prof:
             xs = [p["dist_km"] for p in prof]
             ys = [p["ele_m"] for p in prof]
-            view = ch.line_chart("海拔剖面", xs, ys, color="#1e88e5",
-                                 y_label="海拔 (m)", height=280, fmt="%.0f")
+            view = ch.elevation_chart_with_climbs(
+                "海拔剖面（爬坡段高亮）", xs, ys, r.get("climbs", []),
+                color="#1e88e5", y_label="海拔 (m)", height=300, fmt="%.0f")
             self.chart_container.addWidget(view)
         else:
             self.chart_container.addWidget(QLabel("该路书无海拔数据，无法绘制剖面。"))
@@ -91,6 +131,28 @@ class RouteDialog(QDialog):
             self.climb_label.setText("<br>".join(lines))
         else:
             self.climb_label.setText("无明显爬坡段（多为平路或缓坡）。")
+
+    def _ai_analyze(self):
+        if not self._route or not self._ai_factory:
+            return
+        if not self._ai_enabled:
+            QMessageBox.information(self, "提示", "请先在「设置」中启用并配置 AI")
+            return
+        self.btn_ai.setEnabled(False)
+        self.ai_label.setStyleSheet("color: #888;")
+        self.ai_label.setText("AI 分析中，请稍候…")
+        self._worker = _AnalyzeWorker(self._ai_factory, self._route, None, self)
+        self._worker.done.connect(self._on_ai_done)
+        self._worker.start()
+
+    def _on_ai_done(self, answer):
+        self.btn_ai.setEnabled(True)
+        if answer:
+            self.ai_label.setStyleSheet("")
+            self.ai_label.setText(f"<b>AI 难度解读：</b><br>{answer}")
+        else:
+            self.ai_label.setStyleSheet("color: #c62828;")
+            self.ai_label.setText("AI 解读失败（请检查 AI 配置或网络）。")
 
     def _export(self):
         if not self._route:
