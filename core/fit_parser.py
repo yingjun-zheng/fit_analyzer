@@ -4,7 +4,6 @@
 """
 import hashlib
 import logging
-import re
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -34,51 +33,6 @@ MANUFACTURER_DISPLAY = {
     "cycling_computers": "Cycling Computers",
 }
 
-# 产品码 → 型号（无 product_name 时的兜底；部分来源：设备官方导出/社区整理）
-PRODUCT_MODELS = {
-    "igpsport": {
-        # BSC 系列（兼容旧固件的产品码变体归到基础型号）
-        100: "BSC100", 101: "BSC100S", 110: "BSC100 Max",
-        200: "BSC200", 201: "BSC200S",
-        300: "BSC300", 301: "BSC300", 302: "BSC300",
-        320: "BSC300T", 321: "BSC300T",
-        500: "BSC500",
-        # iGS 系列（高端触摸屏机型；800 已被官方确认）
-        800: "iGS800",
-    },
-    "magene": {
-        302: "C406", 303: "C406 Pro", 307: "C606", 310: "C606 Pro",
-    },
-    "bryton": {
-        1800: "Rider 15", 1801: "Rider 15",  # 1800 段为 Rider 15 系列（1801 为早期变体，待确认）
-        1815: "Rider 15", 1816: "Rider 16", 1820: "Rider 20",
-        1833: "Rider 330", 1841: "Rider 410", 1842: "Rider 420",
-        1845: "Rider 450", 1853: "Rider 530", 1854: "Rider 540",
-        1875: "Rider 750", 1886: "Rider 860",
-    },
-}
-
-# product_name 里常见缩写展开
-PRODUCT_NAME_EXPAND = {
-    "C606P": "C606 Pro", "C406P": "C406 Pro", "C506P": "C506 Pro",
-    "C606": "C606", "C406": "C406", "C506": "C506",
-    # iGPSPORT BSC 系列（product_name 也可能自带型号名）
-    "BSC100": "BSC100", "BSC100S": "BSC100S", "BSC200": "BSC200",
-    "BSC200S": "BSC200S", "BSC300": "BSC300", "BSC300T": "BSC300T",
-    "BSC500": "BSC500", "iGS800": "iGS800",
-}
-
-
-def _clean_product_name(name):
-    """'C606P_41338' → 'C606P' → 'C606 Pro'；去掉尾部 _数字/-数字 并展开常见缩写。"""
-    if not name:
-        return None
-    s = str(name).strip()
-    s = re.sub(r"[-_]\d+$", "", s).strip()
-    s = re.sub(r"\s+", " ", s)
-    return PRODUCT_NAME_EXPAND.get(s, s) or None
-
-
 def _to_int(v):
     try:
         return int(v)
@@ -89,35 +43,23 @@ def _to_int(v):
 def _format_device(manufacturer, product, product_name, overrides=None, hw_version=None, sw_version=None):
     """组装设备显示名。
 
-    优先级：用户覆盖表（设置里“设备型号表”）> 文件自带 product_name > 内置产品码表 > 兜底。
-    overrides: {"厂商/产品码": "型号名"}。
+    识别彻底止步于「品牌」：程序自动识别只认品牌，不做任何型号翻译——
+    厂商产品码开放且不断新增，文件自带的 product_name 也五花八门（如
+    'C606P_41338'），自动补全型号既收不全又易误判。因此：
+      - 品牌（manufacturer）是 FIT 标准枚举，能收全 → 只认品牌
+      - 唯一例外：用户在「设置→设备型号表」手动登记的具体型号（用户自己的选择）
+      - 不自动展开文件自带的 product_name，不显示「产品码 XX」兜底格式
     """
     brand = MANUFACTURER_DISPLAY.get(manufacturer, manufacturer) if manufacturer else "未知设备"
     if isinstance(brand, int) or (isinstance(brand, str) and brand.isdigit()):
         brand = f"厂商{manufacturer}"
     p = _to_int(product)
-    model = None
-    # 1) 用户覆盖表
+    # 仅在用户手动登记（设置→设备型号表）时附带具体型号；其余一律只显示品牌
     if overrides and p is not None and manufacturer:
         key = f"{manufacturer}/{p}"
         v = overrides.get(key)
         if v is not None and str(v).strip():
-            model = str(v).strip()
-    # 2) 文件自带型号名
-    if not model and product_name:
-        model = _clean_product_name(product_name)
-    # 3) 内置产品码表
-    if not model and p is not None and manufacturer in PRODUCT_MODELS and p in PRODUCT_MODELS[manufacturer]:
-        model = PRODUCT_MODELS[manufacturer][p]
-    if model:
-        return f"{brand} {model}"
-    if p is not None:
-        extra = ""
-        if hw_version is not None:
-            extra += f" 硬件{hw_version}"
-        if sw_version is not None:
-            extra += f" 固件{sw_version}"
-        return f"{brand}（产品码 {p}{extra}）"
+            return f"{brand} {str(v).strip()}"
     return brand
 
 

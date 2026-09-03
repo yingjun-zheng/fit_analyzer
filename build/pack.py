@@ -28,14 +28,50 @@ DIST = ROOT / "dist"
 FINAL_NAME = "骑行FIT数据分析器"
 
 
+def kill_running_processes():
+    """结束正在运行的本程序进程（避免 exe 及其加载的 dll 被占用）。"""
+    if os.name != "nt":
+        return
+    code = (
+        "import subprocess\n"
+        "out = subprocess.run(['tasklist', '/FO', 'CSV'], capture_output=True, text=True).stdout\n"
+        "pids = []\n"
+        "for line in out.splitlines():\n"
+        # 匹配 exe 名（含中文，用进程名后缀特征）
+        "    if '骑行FIT数据分析器' in line or 'FIT数据分析器' in line:\n"
+        "        parts = line.split(',\"')\n"
+        "        if len(parts) > 2:\n"
+        "            try: pids.append(parts[1].strip('\"'))\n"
+        "            except Exception: pass\n"
+        "for pid in set(pids):\n"
+        "    subprocess.run(['taskkill', '/F', '/PID', pid], capture_output=True)\n"
+        "print(f'已结束 {len(set(pids))} 个进程')\n"
+    )
+    r = subprocess.run(
+        [str(VENV_PY), "-c", code],
+        cwd=str(ROOT),
+        capture_output=True, text=True,
+    )
+    print(f"  {r.stdout.strip()}")
+
+
 def safe_rmtree(path: Path):
-    """在「禁用 safe-delete 的子进程」里删除目录。"""
+    """在「禁用 safe-delete 的子进程」里删除目录（带重试，避免 ignore_errors 静默残留）。"""
     if not path.exists():
         return
     code = (
         "import os, shutil, sys\n"
         "p = sys.argv[1]\n"
-        "shutil.rmtree(p, ignore_errors=True)\n"
+        "def rm(p):\n"
+        "    if os.path.isfile(p) or os.path.islink(p):\n"
+        "        try: os.unlink(p)\n"
+        "        except OSError: pass\n"
+        "    elif os.path.isdir(p):\n"
+        "        try: shutil.rmtree(p)\n"
+        "        except OSError: pass\n"
+        "for _ in range(5):\n"  # 重试 5 次，对付索引/杀毒短暂占用
+        "    rm(p)\n"
+        "    if not os.path.exists(p): break\n"
         "print('GONE' if not os.path.exists(p) else 'PARTIAL')\n"
     )
     r = subprocess.run(
