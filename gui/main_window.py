@@ -156,6 +156,8 @@ class MainWindow(QMainWindow):
         act_export.triggered.connect(self.export_gpx)
         act_plan = QAction("🧭 路径规划", self)
         act_plan.triggered.connect(self.open_plan)
+        act_auto_plan = QAction("✨ 自动规划路书", self)
+        act_auto_plan.triggered.connect(self.open_auto_plan)
         act_to_route = QAction("🔁 转路书", self)
         act_to_route.triggered.connect(self.export_route)
         # 删除选中（批量）
@@ -168,6 +170,7 @@ class MainWindow(QMainWindow):
         tb.addSeparator()
         tb.addAction(act_export)
         tb.addAction(act_plan)
+        tb.addAction(act_auto_plan)
         tb.addAction(act_to_route)
         tb.addSeparator()
         tb.addAction(act_settings)
@@ -1280,6 +1283,13 @@ class MainWindow(QMainWindow):
         from gui.route_plan_map import PlanDialog
         dlg = PlanDialog(self.config, ai_client_factory=self._ai_client,
                          ai_enabled=self.config.get("ai_enabled"), parent=self)
+        dlg.exec()
+
+    def open_auto_plan(self):
+        """打开输入内容自动规划对话框（自然语言 → 分段接力 → 休息点标定）。"""
+        from gui.auto_plan_dialog import AutoPlanDialog
+        dlg = AutoPlanDialog(self.config, ai_client_factory=self._ai_client,
+                             ai_enabled=self.config.get("ai_enabled"), parent=self)
         dlg.exec()
 
     def export_route(self):
