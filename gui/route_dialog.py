@@ -118,6 +118,19 @@ class RouteDialog(QDialog):
         else:
             self.chart_container.addWidget(QLabel("该路书无海拔数据，无法绘制剖面。"))
 
+        # 3D 路线景观（坡度着色立体路线）
+        if prof:
+            from gui.route_3d import Route3DWidget
+            try:
+                t3d = QLabel("3D 路线景观（坡度着色）")
+                t3d.setObjectName("h3")
+                self.chart_container.addWidget(t3d)
+                w3d = Route3DWidget()
+                w3d.set_profile(prof)
+                self.chart_container.addWidget(w3d)
+            except Exception:
+                pass
+
         # 爬坡段
         climbs = r.get("climbs", [])
         if climbs:

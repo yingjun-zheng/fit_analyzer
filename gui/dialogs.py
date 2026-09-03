@@ -30,12 +30,13 @@ def _parse_float_list(text):
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, config, parent=None, on_reidentify=None):
+    def __init__(self, config, parent=None, on_reidentify=None, db=None):
         super().__init__(parent)
         self.config = config
         self._on_reidentify = on_reidentify
+        self._db = db
         self.setWindowTitle("设置")
-        self.setMinimumWidth(440)
+        self.setMinimumWidth(480)
         d = config.public_dict()
 
         form = QFormLayout()
@@ -68,6 +69,23 @@ class SettingsDialog(QDialog):
         tip = QLabel("支持 Ollama / LM Studio / vLLM 等本地模型，或 DeepSeek / OpenAI 等远程接口（用自己的 Key）。")
         tip.setObjectName("muted")
         tip.setWordWrap(True)
+
+        # FTP（功能阈值功率）：手动填 + 从最近活动自动估算
+        ftp_title = QLabel("FTP（功能阈值功率）")
+        ftp_title.setObjectName("h3")
+        form.addRow(ftp_title)
+        self.edFtp = QLineEdit(str(d.get("ftp_w") or ""))
+        self.edFtp.setPlaceholderText("手动填写 FTP，单位 W（0 或留空 = 未设置）")
+        form.addRow("FTP (W)", self.edFtp)
+        ftp_row = QHBoxLayout()
+        self.btnEstFtp = QPushButton("🧮 从最近活动估算 FTP")
+        self.btnEstFtp.clicked.connect(self._estimate_ftp)
+        ftp_row.addWidget(self.btnEstFtp)
+        self.lblFtpEst = QLabel("")
+        self.lblFtpEst.setObjectName("muted")
+        self.lblFtpEst.setWordWrap(True)
+        ftp_row.addWidget(self.lblFtpEst, 1)
+        form.addRow("", ftp_row)
 
         # 设备型号表：新码表可在此手动登记（厂商/产品码 = 型号名）
         dm = d.get("device_models") or {}
@@ -127,6 +145,42 @@ class SettingsDialog(QDialog):
         lay.addWidget(tip)
         lay.addWidget(buttons)
 
+    def _estimate_ftp(self):
+        """从数据库中最近的一次活动估算 FTP（用估功率补全，无功率计时）。"""
+        if self._db is None:
+            self.lblFtpEst.setText("无法估算：未连数据库")
+            return
+        try:
+            from core import analysis, ftp_estimate
+            acts = self._db.list_activities(limit=20)
+            if not acts:
+                self.lblFtpEst.setText("无活动数据，请先导入 FIT")
+                return
+            # 找最近一条有足够时长的活动
+            chosen = None
+            chosen_recs = None
+            for a in acts:
+                recs = self._db.get_records(a["id"])
+                if len(recs) >= 300:  # 至少约 5 分钟
+                    chosen = a
+                    chosen_recs = recs
+                    break
+            if chosen is None:
+                self.lblFtpEst.setText("无足够时长的活动（需 ≥5 分钟）")
+                return
+            recs = analysis.estimate_power(chosen_recs, self.config)
+            est = ftp_estimate.estimate_ftp(recs, self.config)
+            if not est:
+                self.lblFtpEst.setText("该活动无有效功率数据，无法估算")
+                return
+            self.edFtp.setText(str(est["ftp_w"]))
+            self.lblFtpEst.setText(
+                f"已按「{chosen['name']}」估算：最佳20分钟 {est['best_20min_w']}W → FTP {est['ftp_w']}W"
+                + (f"（{est['wkg']} W/kg）" if est.get("wkg") else "")
+            )
+        except Exception as e:
+            self.lblFtpEst.setText(f"估算失败：{e}")
+
     def _do_reidentify(self):
         """先保存当前设置（含型号表），再触发主窗口重新识别所有设备。"""
         self._save()
@@ -148,6 +202,10 @@ class SettingsDialog(QDialog):
             timeout = 120
         # 设备型号表解析：每行 "厂商/产品码 = 型号名"
         device_models = {}
+        try:
+            ftp_w = int(self.edFtp.text().strip() or "0")
+        except ValueError:
+            ftp_w = 0
         for line in self.edDevice.toPlainText().splitlines():
             line = line.strip()
             if not line or line.startswith("#"):
@@ -174,6 +232,7 @@ class SettingsDialog(QDialog):
             "ai_temperature": temp,
             "ai_timeout": timeout,
             "device_models": device_models,
+            "ftp_w": ftp_w,
             "amap_key": self.edAmapKey.text().strip(),
             "amap_security": self.edAmapSec.text().strip(),
             "amap_web_key": self.edAmapWebKey.text().strip(),

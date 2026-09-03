@@ -812,6 +812,51 @@ class MainWindow(QMainWindow):
 
         # 概览图表（Web 式自适应：图表填满宽度，坐标轴刻度随尺寸自动调整，绝不重叠）
         self._clear_layout(self.ov_charts)
+
+        # 补给计划（按里程/时长/强度/消耗）
+        try:
+            from core import nutrition
+            plan = nutrition.nutrition_plan(act)
+            if plan:
+                ncard = self._card()
+                title = QLabel(f"🥤 补给计划 · {plan['title']}")
+                title.setObjectName("h3")
+                ncard.layout().addWidget(title)
+                for k, v, _ in plan["items"]:
+                    row = QLabel(f"{k}：{v}")
+                    row.setObjectName("muted")
+                    row.setWordWrap(True)
+                    ncard.layout().addWidget(row)
+                tip = QLabel(plan["summary"])
+                tip.setObjectName("muted")
+                tip.setWordWrap(True)
+                ncard.layout().addWidget(tip)
+                self.ov_charts.addWidget(ncard)
+        except Exception:
+            pass
+
+        # 安全分析（急停/异常事件检测）
+        try:
+            from core import safety
+            evts = safety.detect_events(records)
+            if evts:
+                scard = self._card()
+                stitle = QLabel(f"⚠ 安全提示 · 检测到 {len(evts)} 处疑似急停")
+                stitle.setObjectName("h3")
+                scard.layout().addWidget(stitle)
+                for e in evts[:5]:
+                    el = QLabel(f"· {e['time'] or '未知时刻'}：{e['desc']}")
+                    el.setObjectName("muted")
+                    el.setWordWrap(True)
+                    scard.layout().addWidget(el)
+                if len(evts) > 5:
+                    more = QLabel(f"… 共 {len(evts)} 处")
+                    more.setObjectName("muted")
+                    scard.layout().addWidget(more)
+                self.ov_charts.addWidget(scard)
+        except Exception:
+            pass
+
         km_data = an["per_km"]
         if km_data:
             cats = [str(p["km"] + 1) if (p["km"] + 1) % 5 == 0 else "" for p in km_data]
@@ -1163,7 +1208,7 @@ class MainWindow(QMainWindow):
 
     # ---------------- 其他 ----------------
     def open_settings(self):
-        dlg = SettingsDialog(self.config, self, on_reidentify=self.reidentify_devices)
+        dlg = SettingsDialog(self.config, self, on_reidentify=self.reidentify_devices, db=self.db)
         dlg.exec()
 
     def open_logs(self):
