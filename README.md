@@ -208,6 +208,7 @@ fit_analyzer/
 ###  目前已测试数据的码表（欢迎提供各大品牌码表数据供测试）
 - IGP BSC200
 - IGP BSC300
+- IGP BiNavi
 - 百锐腾 Rider 15（产品码 1801，已映射为 Rider 15，若实为其他型号请在「设置 → 设备型号表」覆盖）
 - 迈金Magene C606 pro
 - 佳明
