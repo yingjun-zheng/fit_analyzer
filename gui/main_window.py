@@ -928,6 +928,31 @@ class MainWindow(QMainWindow):
             tip.setWordWrap(True)
             c.layout().addWidget(tip)
             self.zs_charts.addWidget(c)
+
+        # 心率区间深度总结（训练结构诊断）
+        try:
+            from core import hr_summary
+            hr_max_v = self.config.get("hr_max_override") or act.get("max_hr")
+            hs = hr_summary.hr_summary(hz, records, hr_max_v)
+            if hs:
+                sc = self._card()
+                st = QLabel("❤ 心率深度总结")
+                st.setObjectName("h3")
+                sc.layout().addWidget(st)
+                for k, v, _ in hs["items"]:
+                    row = QLabel(f"{k}：{v}")
+                    row.setObjectName("muted")
+                    row.setWordWrap(True)
+                    sc.layout().addWidget(row)
+                for line in hs["summary"]:
+                    sl = QLabel("· " + line)
+                    sl.setObjectName("muted")
+                    sl.setWordWrap(True)
+                    sc.layout().addWidget(sl)
+                self.zs_charts.addWidget(sc)
+        except Exception:
+            pass
+
         cz = an["cadence_zones"]
         if cz:
             c = self._card()
