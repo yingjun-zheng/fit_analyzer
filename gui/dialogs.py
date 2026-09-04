@@ -10,7 +10,9 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QVBoxLayout,
+    QWidget,
 )
 
 from core import logging_setup
@@ -36,7 +38,8 @@ class SettingsDialog(QDialog):
         self._on_reidentify = on_reidentify
         self._db = db
         self.setWindowTitle("设置")
-        self.setMinimumWidth(480)
+        self.setMinimumWidth(420)
+        self.resize(520, 620)
         d = config.public_dict()
 
         form = QFormLayout()
@@ -69,6 +72,7 @@ class SettingsDialog(QDialog):
         tip = QLabel("支持 Ollama / LM Studio / vLLM 等本地模型，或 DeepSeek / OpenAI 等远程接口（用自己的 Key）。")
         tip.setObjectName("muted")
         tip.setWordWrap(True)
+        form.addRow(tip)
 
         # FTP（功能阈值功率）：手动填 + 从最近活动自动估算
         ftp_title = QLabel("FTP（功能阈值功率）")
@@ -140,9 +144,16 @@ class SettingsDialog(QDialog):
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
 
+        # 内容放进可滚动区，屏幕小时仍能滚动到全部设置项；
+        # 底部「保存/取消」按钮始终固定可见。
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        scroll.setWidget(form_container := QWidget())
+        form_container.setLayout(form)
+
         lay = QVBoxLayout(self)
-        lay.addLayout(form)
-        lay.addWidget(tip)
+        lay.addWidget(scroll, 1)
         lay.addWidget(buttons)
 
     def _estimate_ftp(self):

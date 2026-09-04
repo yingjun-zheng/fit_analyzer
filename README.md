@@ -21,6 +21,20 @@
 - **GPX 导出**：单条活动导出为 GPX 1.1 格式（含 Garmin TrackPointExtension 扩展：心率/踏频/温度/速度/功率），兼容 Strava / Garmin Connect / 行者等平台
 - 内置**日志系统**（滚动文件 + 界面实时查看）
 
+![月概览](imgs/月概览.png)
+
+![单次活动概览](imgs/单次活动概览.png)
+
+![活动详情](imgs/活动详情.png)
+
+![骑行路径](imgs/骑行路径.png)
+
+![ai分析](imgs/ai分析.png)
+
+![路书规划-路径点模式](imgs/路书规划-路径点模式.png)
+
+![路径规划，ai自动模式](imgs/路径规划，ai自动模式.png)
+
 ---
 
 ## 一、运行

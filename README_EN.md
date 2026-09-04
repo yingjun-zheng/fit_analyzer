@@ -21,6 +21,20 @@ A free, local, offline **cycling FIT data analysis tool** (pure desktop Windows 
 - **GPX export**: export a single activity as GPX 1.1 (with Garmin TrackPointExtension: HR / cadence / temperature / speed / power), compatible with Strava / Garmin Connect / XOSS
 - Built-in **logging system** (rolling files + in-app live view)
 
+![月概览](imgs/月概览.png)
+
+![单次活动概览](imgs/单次活动概览.png)
+
+![活动详情](imgs/活动详情.png)
+
+![骑行路径](imgs/骑行路径.png)
+
+![ai分析](imgs/ai分析.png)
+
+![路书规划-路径点模式](imgs/路书规划-路径点模式.png)
+
+![路径规划，ai自动模式](imgs/路径规划，ai自动模式.png)
+
 ---
 
 ## 1. Running
