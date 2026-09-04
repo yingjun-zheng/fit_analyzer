@@ -860,6 +860,49 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
+        # 天气查询与骑行建议
+        try:
+            from core import weather
+            amap_key = (self.config.get("amap_web_key") or "").strip()
+            if amap_key:
+                wcard = self._card()
+                wt = QLabel("🌤 天气查询")
+                wt.setObjectName("h3")
+                wcard.layout().addWidget(wt)
+                wrow = QHBoxLayout()
+                wed = QLineEdit()
+                wed.setPlaceholderText("输入城市名，如：北京、杭州")
+                wed.setFixedWidth(160)
+                wbtn = QPushButton("查询")
+                wbtn.setFixedWidth(60)
+                wlbl = QLabel("")
+                wlbl.setObjectName("muted")
+                wlbl.setWordWrap(True)
+                def _do_weather():
+                    city = wed.text().strip() or "北京"
+                    wlbl.setText("查询中…")
+                    try:
+                        wd = weather.get_weather(amap_key, city)
+                        ws = weather.ride_suggestion(wd)
+                        if ws.get("error"):
+                            wlbl.setText(ws["error"])
+                            return
+                        lines = [f"{ws['city']}：{ws['weather']} {ws['temperature']}°C  {ws['winddirection']}风{ws['windpower']}  湿度{ws['humidity']}%"]
+                        for l in ws.get("suggestion_lines", []):
+                            lines.append("· " + l)
+                        wlbl.setText("\n".join(lines))
+                    except Exception as e:
+                        wlbl.setText(f"查询失败：{e}")
+                wbtn.clicked.connect(_do_weather)
+                wrow.addWidget(wed)
+                wrow.addWidget(wbtn)
+                wrow.addStretch(1)
+                wcard.layout().addLayout(wrow)
+                wcard.layout().addWidget(wlbl)
+                self.ov_charts.addWidget(wcard)
+        except Exception:
+            pass
+
         km_data = an["per_km"]
         if km_data:
             cats = [str(p["km"] + 1) if (p["km"] + 1) % 5 == 0 else "" for p in km_data]
