@@ -1,4 +1,5 @@
 # 🚴 骑行FIT数据分析器（Fit Analyzer）
+ [EN](/README_EN.md) · [中文](/README.md) 
 
 免费、本地运行的**骑行 FIT 数据离线分析软件**（纯桌面 Windows 应用，PySide6 原生界面，无浏览器、无本地服务），参考 Garmin Connect / 行者 的骑行数据分析功能：
 
