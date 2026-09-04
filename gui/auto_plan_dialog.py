@@ -168,21 +168,30 @@ class AutoPlanDialog(QDialog):
             return
 
         self._result = payload
-        r = payload["route"]
-        rp = payload["rest_points"]
+        r = payload.get("route")
+        if not r or not isinstance(r, dict) or not r.get("points"):
+            self.status.setStyleSheet("color: #c62828;")
+            self.status.setText("规划失败：路线数据不完整")
+            return
+
+        rp = payload.get("rest_points") or []
         lines = [
-            f"规划完成：{r['total_distance_km']} km，共 {len(payload['segments'])} 段",
+            f"规划完成：{r.get('total_distance_km', '?')} km，共 {len(payload.get('segments', []))} 段",
         ]
         if rp:
             lines.append("休息点：")
             for p in rp:
-                lines.append(f"  · {p['at_km']}km 处：{p['name']}")
+                lines.append(f"  · {p.get('at_km', '?')}km 处：{p.get('name', '?')}")
         self.status.setStyleSheet("")
         self.status.setText("\n".join(lines))
 
         # 弹出路书分析对话框展示完整路书
-        from gui.route_dialog import RouteDialog
-        dlg = RouteDialog(self, ai_client_factory=self._ai_factory,
-                          ai_enabled=self._ai_enabled)
-        dlg.load_route(r)
-        dlg.exec()
+        try:
+            from gui.route_dialog import RouteDialog
+            dlg = RouteDialog(self, ai_client_factory=self._ai_factory,
+                              ai_enabled=self._ai_enabled)
+            dlg.load_route(r)
+            dlg.exec()
+        except Exception as e:
+            self.status.setStyleSheet("color: #c62828;")
+            self.status.setText(f"路书展示失败：{e}")

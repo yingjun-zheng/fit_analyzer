@@ -156,6 +156,16 @@ def plan_long_route(key, origin, dest, segment_km=30, rest_type="便利店",
         "plan_duration_s": total_dur,
     })
 
+    # 高德骑行规划不返回海拔，自动联网补全海拔（Open-Meteo），
+    # 确保路书预览有海拔剖面和 3D 路线（离线则静默降级）
+    if not any(p.get("ele") is not None for p in r["points"]):
+        try:
+            route_mod.enrich_elevation_from_api(r)
+            route_mod._compute_elevation(r)
+            route_mod._compute_climbs(r)
+        except Exception:
+            pass
+
     # 4) 就近标定休息点（在每个分段接点附近搜 POI）
     rest_points = []
     if n_seg > 1:
@@ -165,11 +175,13 @@ def plan_long_route(key, origin, dest, segment_km=30, rest_type="便利店",
             if pois:
                 p = pois[0]
                 at_km = round(total_km * i / n_seg, 1)
+                # POI 返回的是 GCJ-02，纠偏到 WGS-84 与路书坐标一致
+                lon, lat = route_plan.gcj02_to_wgs84(p["location"][0], p["location"][1])
                 rest_points.append({
                     "name": p["name"],
                     "type": p["type"],
                     "distance_m": p["distance_m"],
-                    "location": p["location"],
+                    "location": (lon, lat),
                     "at_km": at_km,
                 })
 

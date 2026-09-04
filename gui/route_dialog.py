@@ -107,7 +107,7 @@ class RouteDialog(QDialog):
 
         # 海拔剖面图（含爬坡段色带高亮）
         self._clear_layout(self.chart_container)
-        prof = r["elevation_profile"]
+        prof = r.get("elevation_profile")
         if prof:
             xs = [p["dist_km"] for p in prof]
             ys = [p["ele_m"] for p in prof]
