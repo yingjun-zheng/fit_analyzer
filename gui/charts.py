@@ -480,3 +480,269 @@ def elevation_chart_with_climbs(title, xs, ys, climbs, color="#1e88e5",
         band.lowerSeriesRef = lower
 
     return _view(chart, height, adaptive={"type": "numeric"})
+
+
+# 心率区间配色（Z1 恢复 → Z5 无氧，由浅到深/冷到暖）
+HR_ZONE_COLORS = ["#90a4ae", "#43a047", "#fdd835", "#fb8c00", "#e53935"]
+
+
+def hr_curve_with_zones(title, xs_sec, ys, hr_max, pcts, height=300, fmt="%.0f"):
+    """带心率区间色带背景的心率曲线。
+
+    在心率曲线上按 5 区阈值叠加半透明水平色带（视觉同路书爬坡色带），
+    一眼看出「哪段时间落在哪个心率区」。
+
+    xs_sec/ys：心率时间序列。
+    hr_max：最大心率（用于算区间边界）。pcts：区间百分比边界（如 [0.6,0.7,0.8,0.9]）。
+    """
+    chart = QChart()
+    _style(chart, title)
+    x_max = max(xs_sec) if xs_sec else 0
+
+    # 区间边界（bpm）
+    bounds = [hr_max * p for p in pcts] if hr_max else []
+    valid_ys = [y for y in ys if y is not None]
+    y_hi = max(valid_ys) if valid_ys else hr_max
+    if hr_max:
+        y_hi = max(y_hi, hr_max)
+
+    zones = []  # [(lo_bpm, hi_bpm)]
+    if bounds:
+        prev = 0.0
+        for b in bounds:
+            zones.append((prev, b))
+            prev = b
+        zones.append((prev, max(prev + 1, y_hi)))
+
+    # 1) 先画区间色带（背景）
+    for i, (zlo, zhi) in enumerate(zones):
+        color = HR_ZONE_COLORS[i % len(HR_ZONE_COLORS)]
+        upper = QLineSeries()
+        lower = QLineSeries()
+        upper.setPen(QPen(Qt.NoPen))
+        lower.setPen(QPen(Qt.NoPen))
+        upper.append(0.0, float(zhi))
+        upper.append(float(x_max), float(zhi))
+        lower.append(0.0, float(zlo))
+        lower.append(float(x_max), float(zlo))
+        band = QAreaSeries(upper, lower)
+        band.setName(f"Z{i + 1}")
+        band.setColor(QColor(color))
+        band.setBorderColor(QColor(Qt.transparent))
+        band.setOpacity(0.20)
+        chart.addSeries(band)
+        band.upperSeriesRef = upper
+        band.lowerSeriesRef = lower
+
+    # 2) 再画心率折线
+    line = QLineSeries()
+    line.setPen(QPen(QColor("#111111"), 1.8))
+    for x, y in zip(xs_sec, ys):
+        if y is None:
+            continue
+        line.append(float(x), float(y))
+    chart.addSeries(line)
+
+    ax_x = QCategoryAxis()
+    ax_x.setLabelsPosition(QCategoryAxis.AxisLabelsPositionOnValue)
+    _no_title(ax_x)
+    ax_x.setLabelsFont(_axis_font())
+    import math
+    step = max(60, int(math.ceil(x_max / 5)))
+    for nice in (60, 120, 300, 600, 900, 1800, 3600):
+        if step <= nice:
+            step = nice
+            break
+    for t in range(0, int(x_max) + step, step):
+        ax_x.append(f"{t // 60}:{t % 60:02d}", float(t))
+    ax_x.setRange(0, float(x_max))
+
+    ax_y = _y_axis("心率 (bpm)", fmt)
+    ax_y.setRange(max(0, -5), y_hi + 5)
+    chart.addAxis(ax_x, Qt.AlignBottom)
+    chart.addAxis(ax_y, Qt.AlignLeft)
+    for s in chart.series():
+        s.attachAxis(ax_x)
+        s.attachAxis(ax_y)
+
+    return _view(chart, height, adaptive={"type": "time", "xs": list(xs_sec)})
+
+
+# ---------------- 渐变折线（按 Y 值分段着色） ----------------
+
+def _lerp_color(c1, c2, t):
+    """在两种 QColor 间线性插值（t: 0~1）。"""
+    t = max(0.0, min(1.0, t))
+    r = int(c1.red() + (c2.red() - c1.red()) * t)
+    g = int(c1.green() + (c2.green() - c1.green()) * t)
+    b = int(c1.blue() + (c2.blue() - c1.blue()) * t)
+    return QColor(r, g, b)
+
+
+def _gradient_color(stops, v01):
+    """stops: [(pos, QColor)] 按 pos 升序；v01: 归一化值 0~1。返回插值颜色。"""
+    if not stops:
+        return QColor("#1e88e5")
+    if v01 <= stops[0][0]:
+        return stops[0][1]
+    if v01 >= stops[-1][0]:
+        return stops[-1][1]
+    for i in range(len(stops) - 1):
+        p0, c0 = stops[i]
+        p1, c1 = stops[i + 1]
+        if p0 <= v01 <= p1:
+            span = (p1 - p0) or 1.0
+            return _lerp_color(c0, c1, (v01 - p0) / span)
+    return stops[-1][1]
+
+
+# 海拔渐变：低海拔绿 → 中黄 → 高海拔红
+ALTITUDE_STOPS = [(0.0, "#2e7d32"), (0.5, "#fdd835"), (1.0, "#e53935")]
+# 速度渐变：低速蓝 → 中速青 → 高速橙
+SPEED_STOPS = [(0.0, "#1565c0"), (0.5, "#00acc1"), (1.0, "#ef6c00")]
+
+
+def gradient_line_numeric(title, xs, ys, stops, y_label="", height=300, fmt="%.0f"):
+    """数值 X 轴渐变折线：按 Y 值归一化后分段着色。
+
+    xs/ys：数据；stops：[(pos, color_hex)] 渐变映射（pos 为 y 归一化位置 0~1）。
+    """
+    chart = QChart()
+    _style(chart, title)
+    vmin = min((y for y in ys if y is not None), default=0)
+    vmax = max((y for y in ys if y is not None), default=1)
+    if vmax - vmin < 1e-6:
+        vmax = vmin + 1.0
+    stops_color = [(p, QColor(c)) for p, c in stops]
+
+    pts = [(float(x), float(y)) for x, y in zip(xs, ys) if y is not None]
+    ax_x = _x_axis_numeric()
+    ax_y = _y_axis(y_label, fmt)
+    ax_y.setRange(vmin, vmax)
+    chart.addAxis(ax_x, Qt.AlignBottom)
+    chart.addAxis(ax_y, Qt.AlignLeft)
+    for i in range(len(pts) - 1):
+        x0, y0 = pts[i]
+        x1, y1 = pts[i + 1]
+        vmid = (y0 + y1) / 2.0
+        v01 = (vmid - vmin) / (vmax - vmin)
+        seg = QLineSeries()
+        seg.setPen(QPen(_gradient_color(stops_color, v01), 1.8))
+        seg.append(x0, y0)
+        seg.append(x1, y1)
+        chart.addSeries(seg)
+        seg.attachAxis(ax_x)
+        seg.attachAxis(ax_y)
+    return _view(chart, height, adaptive={"type": "numeric"})
+
+
+def gradient_line_time(title, xs_sec, ys, stops, y_label="", height=300, fmt="%.0f"):
+    """时间 X 轴渐变折线（X 轴 mm:ss，按 Y 值分段着色）。"""
+    chart = QChart()
+    _style(chart, title)
+    vmin = min((y for y in ys if y is not None), default=0)
+    vmax = max((y for y in ys if y is not None), default=1)
+    if vmax - vmin < 1e-6:
+        vmax = vmin + 1.0
+    stops_color = [(p, QColor(c)) for p, c in stops]
+
+    pts = [(float(x), float(y)) for x, y in zip(xs_sec, ys) if y is not None]
+    x_max = max(xs_sec) if xs_sec else 0
+
+    ax_x = QCategoryAxis()
+    ax_x.setLabelsPosition(QCategoryAxis.AxisLabelsPositionOnValue)
+    _no_title(ax_x)
+    ax_x.setLabelsFont(_axis_font())
+    import math
+    step = max(60, int(math.ceil(x_max / 5)))
+    for nice in (60, 120, 300, 600, 900, 1800, 3600):
+        if step <= nice:
+            step = nice
+            break
+    for t in range(0, int(x_max) + step, step):
+        ax_x.append(f"{t // 60}:{t % 60:02d}", float(t))
+    ax_x.setRange(0, float(x_max))
+
+    ax_y = _y_axis(y_label, fmt)
+    ax_y.setRange(vmin, vmax)
+    chart.addAxis(ax_x, Qt.AlignBottom)
+    chart.addAxis(ax_y, Qt.AlignLeft)
+    for i in range(len(pts) - 1):
+        x0, y0 = pts[i]
+        x1, y1 = pts[i + 1]
+        vmid = (y0 + y1) / 2.0
+        v01 = (vmid - vmin) / (vmax - vmin)
+        seg = QLineSeries()
+        seg.setPen(QPen(_gradient_color(stops_color, v01), 1.8))
+        seg.append(x0, y0)
+        seg.append(x1, y1)
+        chart.addSeries(seg)
+        seg.attachAxis(ax_x)
+        seg.attachAxis(ax_y)
+    return _view(chart, height, adaptive={"type": "time", "xs": list(xs_sec)})
+
+
+def altitude_area_chart(title, xs, ys, height=320, fmt="%.0f"):
+    """海拔面积填充图：填充色随海拔高度渐变（低处绿 → 高处红）。
+
+    实现：把海拔曲线切成 N 段，每段一个 QAreaSeries（上界=曲线段，下界=基线），
+    颜色按该段中点海拔做绿色→红色插值，叠加后形成自然的垂直渐变填充。
+    X 轴为里程 km（数值轴）。
+    """
+    chart = QChart()
+    _style(chart, title)
+    vmin = min((y for y in ys if y is not None), default=0)
+    vmax = max((y for y in ys if y is not None), default=1)
+    if vmax - vmin < 1e-6:
+        vmax = vmin + 1.0
+
+    pts = [(float(x), float(y)) for x, y in zip(xs, ys) if y is not None]
+    if len(pts) < 2:
+        return _view(chart, height, adaptive={"type": "numeric"})
+
+    ax_x = _x_axis_numeric()
+    ax_y = _y_axis("海拔 (m)", fmt)
+    ax_y.setRange(vmin, vmax + (vmax - vmin) * 0.12)
+    chart.addAxis(ax_x, Qt.AlignBottom)
+    chart.addAxis(ax_y, Qt.AlignLeft)
+
+    # 颜色渐变：低海拔绿 #2e7d32 → 中黄 #fdd835 → 高红 #e53935
+    stops_color = [(p, QColor(c)) for p, c in ALTITUDE_STOPS]
+
+    def _color_for(alt):
+        v01 = (alt - vmin) / (vmax - vmin)
+        return _gradient_color(stops_color, v01)
+
+    # 分段面积填充：相邻两点之间一段，颜色取该段中点海拔
+    base = vmin
+    for i in range(len(pts) - 1):
+        x0, y0 = pts[i]
+        x1, y1 = pts[i + 1]
+        col = _color_for((y0 + y1) / 2.0)
+        upper = QLineSeries()
+        lower = QLineSeries()
+        upper.setPen(QPen(Qt.NoPen))
+        lower.setPen(QPen(Qt.NoPen))
+        upper.append(x0, y0)
+        upper.append(x1, y1)
+        lower.append(x0, base)
+        lower.append(x1, base)
+        band = QAreaSeries(upper, lower)
+        band.setColor(QColor(col.red(), col.green(), col.blue(), 140))
+        band.setBorderColor(QColor(Qt.transparent))
+        chart.addSeries(band)
+        band.upperSeriesRef = upper
+        band.lowerSeriesRef = lower
+        band.attachAxis(ax_x)
+        band.attachAxis(ax_y)
+
+    # 顶部再画一条实线（清晰地勾出轮廓）
+    line = QLineSeries()
+    line.setPen(QPen(QColor("#37474f"), 2.0))
+    for x, y in pts:
+        line.append(x, y)
+    chart.addSeries(line)
+    line.attachAxis(ax_x)
+    line.attachAxis(ax_y)
+
+    return _view(chart, height, adaptive={"type": "numeric"})

@@ -809,6 +809,7 @@ class MainWindow(QMainWindow):
                 "alt": analysis.downsample_series(records, "alt_m", 500),
                 "power": analysis.downsample_series(records, "power", 500),
             },
+            "elevation": analysis.elevation_series(records, 600),
             "track": analysis.track_points(records, self.config.get("track_max_points")),
         }
         self.cur_analysis = an
@@ -923,14 +924,28 @@ class MainWindow(QMainWindow):
             xs = [p["t"] for p in pts]
             ys = [p["v"] * 3.6 if key == "speed" else p["v"] for p in pts]
             c = self._card()
-            c.layout().addWidget(ch.line_chart_time(title, xs, ys, color, unit, 320, "%.0f"))
+            if key == "hr":
+                # 心率曲线带区间色带高亮
+                hr_max_v = self.config.get("hr_max_override") or act.get("max_hr")
+                hr_pcts = self.config.get("hr_zone_pcts")
+                if hr_max_v and hr_pcts:
+                    c.layout().addWidget(ch.hr_curve_with_zones(
+                        title, xs, ys, hr_max_v, hr_pcts, 320, "%.0f"))
+                else:
+                    c.layout().addWidget(ch.line_chart_time(title, xs, ys, color, unit, 320, "%.0f"))
+            elif key == "speed":
+                # 速度渐变折线（低速蓝 → 高速橙）
+                c.layout().addWidget(ch.gradient_line_time(
+                    title, xs, ys, ch.SPEED_STOPS, unit, 320, "%.0f"))
+            else:
+                c.layout().addWidget(ch.line_chart_time(title, xs, ys, color, unit, 320, "%.0f"))
             self.ov_charts.addWidget(c)
-        alt_pts = series.get("alt") or []
+        alt_pts = an.get("elevation") or []
         if alt_pts:
             c = self._card()
-            c.layout().addWidget(ch.line_chart(
+            c.layout().addWidget(ch.altitude_area_chart(
                 "海拔 (m) — 里程 (km)", [p["t"] for p in alt_pts], [p["v"] for p in alt_pts],
-                "#8d6e63", "m", 320, "%.0f"))
+                320, "%.0f"))
             self.ov_charts.addWidget(c)
         t = an["temp"]
         if t.get("has"):
