@@ -2,18 +2,21 @@
 
 A free, local, offline **cycling FIT data analysis tool** (pure desktop Windows app, native PySide6 GUI, no browser, no local server). Inspired by the analysis features of Garmin Connect / XOSS.
 
-- **Native desktop GUI** with **batch import** of `.fit` files exported from bike computers (iGPSPORT / Garmin / XOSS and other major devices), stored in local SQLite
+- **Native desktop GUI** with **batch import** of `.fit` files exported from bike computers (iGPSPORT / Garmin / XOSS and other major devices), stored in local SQLite; you can also **drag & drop `.fit` files onto the window** to import
 - Per-activity display: **record time, average speed, calories, max speed, average heart rate, average cadence, total ascent** and 16+ metrics
 - **Per-kilometer speed line chart**, **speed zone stats**, **heart rate stats & zones**, **cadence stats & zones**, **altitude stats**, **device temperature stats**
 - **Lap (segment) data detail**, **all activity detail fields**
 - **Track map**: optional AMap online map, or fixed background image + track overlay (start/end markers, altitude range)
 - **Monthly summary**: rides per month / distance / time / ascent / calories, with cross-month line charts
+- **Annual distance goal**: set a yearly target and the monthly view shows a progress bar with the daily shortfall
+- **Ride calendar heatmap**: last 6 months colored by daily distance (GitHub-contribution style), hover for per-day detail
 - **Training load trend**: monthly view shows CTL (fitness) / ATL (fatigue) / TSB (form) as three curves, computed with daily calendar-day decay over all data
 - **Route analysis**: one-click convert a historical activity to a route, GPX route import, climb-segment highlighting on the elevation profile (Cat4~HC five levels), AI route difficulty interpretation
 - **Route planning**: interactive point selection on AMap (XOSS style), waypoint chaining, GCJ-02 → WGS-84 coordinate correction
 - **Auto route planning**: describe your needs in one sentence (e.g. "Beijing to Tianjin, rest every 35 km, where there is supply"), AI parsing + segmented relay + nearby rest-point marking — ideal for long-distance / cross-city rides
 - **Heart-rate zone deep summary**: turn 5-zone HR distribution into training-structure diagnosis (aerobic / threshold / anaerobic proportions + pace comparison + advice)
 - **Nutrition plan**: quantified hydration / carbohydrate / electrolyte recommendations by distance / time / intensity / temperature
+- **Post-ride recovery advice**: quantified cool-down, carb refuel, protein, hydration and sleep recommendations by intensity / duration / temperature / ascent
 - **FTP auto-estimation**: best 20-minute power × 0.95 to estimate FTP + power-to-weight ratio
 - **Ride safety analysis**: heuristic detection of sudden stops / suspected crashes (sharp speed drop + prolonged stillness)
 - **3D route view**: grade-colored 3D route (green→yellow→red) + altitude curtain, shown in route analysis
@@ -199,6 +202,7 @@ fit_analyzer/
 │   ├── route_plan_map.py # route planning dialog (AMap interactive selection, QWebEngineView)
 │   ├── auto_plan_dialog.py # auto route planning dialog (natural language + form fallback)
 │   ├── route_3d.py       # 3D route view (grade-colored route)
+│   ├── heatmap.py        # ride calendar heatmap (last 6 months by daily distance)
 │   ├── dialogs.py        # settings / logs dialogs
 │   └── theme.py          # styles & formatting
 ├── core/
@@ -213,6 +217,7 @@ fit_analyzer/
 │   ├── training_load.py  # training load: TSS/CTL/ATL/TSB (HR-based hrTSS when no power meter)
 │   ├── hr_summary.py     # HR zone deep summary (training structure diagnosis)
 │   ├── nutrition.py      # nutrition plan
+│   ├── recovery.py       # post-ride recovery advice
 │   ├── ftp_estimate.py   # FTP auto-estimation
 │   ├── safety.py         # ride safety analysis (sudden-stop / crash detection)
 │   ├── gpx_export.py     # GPX 1.1 export (HR/cadence/temperature/speed/power extensions)

@@ -11,6 +11,8 @@ DEFAULTS = {
     "hr_max_override": 0,                        # 0 = 用数据内最大心率
     "speed_zone_kmh": [10, 15, 20, 25, 30, 35],  # 速度区间边界（km/h）：7 区
     "cadence_zone_rpm": [60, 70, 80, 90, 100],   # 踏频区间边界（rpm）：6 区
+    # ---- 年度目标 ----
+    "year_goal_km": 0,                           # 年度里程目标(km)；0=不启用，月度页顶部显示进度
     # ---- AI ----
     "ai_enabled": False,
     "ai_base_url": "http://127.0.0.1:11434/v1",

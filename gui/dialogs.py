@@ -49,10 +49,12 @@ class SettingsDialog(QDialog):
         self.edHrMax = QLineEdit(str(d.get("hr_max_override") or 0))
         self.edSpeed = QLineEdit(",".join(str(x) for x in (d.get("speed_zone_kmh") or [])))
         self.edCad = QLineEdit(",".join(str(x) for x in (d.get("cadence_zone_rpm") or [])))
+        self.edGoal = QLineEdit(str(d.get("year_goal_km") or 0))
         form.addRow("心率区间边界 %（逗号分隔）", self.edHrPcts)
         form.addRow("最大心率覆盖值（0=自动）", self.edHrMax)
         form.addRow("速度区间边界 km/h", self.edSpeed)
         form.addRow("踏频区间边界 rpm", self.edCad)
+        form.addRow("年度里程目标 km（0=不启用）", self.edGoal)
 
         self.chkAi = QCheckBox("启用 AI 分析")
         self.edBase = QLineEdit(d.get("ai_base_url") or "")
@@ -211,6 +213,10 @@ class SettingsDialog(QDialog):
             timeout = int(self.edTimeout.text().strip() or "120")
         except ValueError:
             timeout = 120
+        try:
+            goal_km = float(self.edGoal.text().strip() or "0")
+        except ValueError:
+            goal_km = 0
         # 设备型号表解析：每行 "厂商/产品码 = 型号名"
         device_models = {}
         try:
@@ -236,6 +242,7 @@ class SettingsDialog(QDialog):
             "hr_max_override": hr_max,
             "speed_zone_kmh": _parse_float_list(self.edSpeed.text()),
             "cadence_zone_rpm": _parse_float_list(self.edCad.text()),
+            "year_goal_km": goal_km,
             "ai_enabled": self.chkAi.isChecked(),
             "ai_base_url": self.edBase.text().strip(),
             "ai_api_key": self.edKey.text().strip(),

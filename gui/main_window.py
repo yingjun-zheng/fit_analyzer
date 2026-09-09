@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMainWindow,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -42,6 +43,7 @@ from core.config import Config
 from core.db import DB
 from gui import charts as ch
 from gui.dialogs import LogsDialog, SettingsDialog
+from gui.heatmap import RideHeatmapWidget
 from gui.theme import fmt_dt, fmt_duration, fmt_km, kmh
 from gui.track_widget import TrackWidget
 from gui.amap_track import TrackMapPanel
@@ -152,6 +154,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(f"{config.get('app_name')} v{config.get('version')}")
         self.setWindowIcon(QIcon(make_app_icon()))
         self.resize(1280, 820)
+        self.setAcceptDrops(True)  # 支持拖拽 .fit 文件导入
 
         self._build_ui()
         self.load_months()
@@ -360,6 +363,21 @@ class MainWindow(QMainWindow):
         head.addWidget(self.mv_ai_btn)
         lay.addLayout(head)
 
+        # 年度里程目标（设置页配置，0=不启用）
+        self.mv_goal_card = self._card()
+        self.mv_goal_title = QLabel("")
+        self.mv_goal_title.setObjectName("h3")
+        self.mv_goal_bar = QProgressBar()
+        self.mv_goal_bar.setTextVisible(False)
+        self.mv_goal_bar.setFixedHeight(10)
+        self.mv_goal_hint = QLabel("")
+        self.mv_goal_hint.setObjectName("muted")
+        self.mv_goal_hint.setWordWrap(True)
+        self.mv_goal_card.layout().addWidget(self.mv_goal_title)
+        self.mv_goal_card.layout().addWidget(self.mv_goal_bar)
+        self.mv_goal_card.layout().addWidget(self.mv_goal_hint)
+        lay.addWidget(self.mv_goal_card)
+
         self.mv_stats = QGridLayout()
         self.mv_stats.setSpacing(8)
         lay.addLayout(self.mv_stats)
@@ -380,6 +398,24 @@ class MainWindow(QMainWindow):
         charts_row.addWidget(c1, 1)
         charts_row.addWidget(c2, 1)
         lay.addLayout(charts_row)
+
+        # 训练日历热力图（近半年，按日里程着色）
+        cal_card = self._card()
+        cal_head = QHBoxLayout()
+        cal_title = QLabel("训练日历（近半年 · 颜色按当日里程）")
+        cal_title.setObjectName("h3")
+        legend = QLabel(
+            "少 <span style='color:#eef1f5'>■</span><span style='color:#cfe0f5'>■</span>"
+            "<span style='color:#9dc4ef'>■</span><span style='color:#5b9de8'>■</span>"
+            "<span style='color:#1e68c8'>■</span> 多")
+        legend.setObjectName("muted")
+        cal_head.addWidget(cal_title)
+        cal_head.addStretch(1)
+        cal_head.addWidget(legend)
+        cal_card.layout().addLayout(cal_head)
+        self.mv_heatmap = RideHeatmapWidget()
+        cal_card.layout().addWidget(self.mv_heatmap)
+        lay.addWidget(cal_card)
 
         # 训练负荷趋势图（CTL/ATL/TSB，全量数据）
         load_card = self._card()
@@ -661,6 +697,8 @@ class MainWindow(QMainWindow):
         self.mv_title.setText(f"{month} 训练汇总")
         self.mv_ai_card.setVisible(False)
         self._on_ai_mode_changed()  # 同步左侧 AI 对话面板的范围提示
+        self._render_year_goal(month)
+        self._render_heatmap()
         m = next((x for x in self.db.months() if x["month"] == month), None)
         acts = self.db.list_activities(month=month)
         if m is None:
@@ -713,6 +751,43 @@ class MainWindow(QMainWindow):
         item = self.mv_table.item(row, 0)
         if item is not None and item.data(Qt.UserRole):
             self.show_activity(item.data(Qt.UserRole))
+
+    def _render_year_goal(self, month):
+        """年度里程目标进度（设置 → 年度里程目标，0=不启用）。"""
+        from datetime import date
+
+        goal = float(self.config.get("year_goal_km") or 0)
+        year = (month or "")[:4]
+        ytd = sum(m0["distance_km"] for m0 in self.db.months()
+                  if (m0["month"] or "").startswith(year))
+        self.mv_goal_title.setText(f"{year} 年度里程目标")
+        if goal <= 0:
+            self.mv_goal_bar.setVisible(False)
+            self.mv_goal_hint.setText("未设置目标：在 设置 → 年度里程目标 填入 km 后显示年度进度")
+            return
+        pct = min(100.0, ytd / goal * 100.0)
+        self.mv_goal_bar.setVisible(True)
+        self.mv_goal_bar.setValue(int(pct))
+        today = date.today()
+        remain = goal - ytd
+        if remain <= 0:
+            self.mv_goal_hint.setText(f"已完成 {ytd:.0f} km，超出目标 {-remain:.0f} km 🎉")
+            return
+        if year == today.strftime("%Y"):
+            days_left = (date(today.year, 12, 31) - today).days
+            extra = (f"· 今年余 {days_left} 天，日均还需 {remain / days_left:.1f} km"
+                     if days_left > 0 else "")
+            self.mv_goal_hint.setText(f"已完成 {ytd:.0f} / {goal:.0f} km（{pct:.0f}%）{extra}")
+        else:
+            self.mv_goal_hint.setText(f"已完成 {ytd:.0f} / {goal:.0f} km（{pct:.0f}%）（{year} 年已结束）")
+
+    def _render_heatmap(self):
+        """训练日历热力图：近 26 周每日里程着色，悬停查看单日。"""
+        from datetime import date, timedelta
+
+        end = date.today()
+        daily = self.db.daily_km_since((end - timedelta(days=26 * 7 - 1)).isoformat())
+        self.mv_heatmap.set_data(daily, end)
 
     def _render_training_load(self):
         """渲染训练负荷趋势图（CTL/ATL/TSB）：优先读 DB 缓存即时出图，缺的放后台补算后重绘。"""
@@ -879,6 +954,28 @@ class MainWindow(QMainWindow):
                 tip.setWordWrap(True)
                 ncard.layout().addWidget(tip)
                 self.ov_charts.addWidget(ncard)
+        except Exception:
+            pass
+
+        # 训练后恢复建议（冷身/补糖/蛋白/补水/睡眠）
+        try:
+            from core import recovery
+            rec = recovery.recovery_plan(act, self.config)
+            if rec:
+                rcard = self._card()
+                rtitle = QLabel(f"🛌 恢复建议 · {rec['title']}")
+                rtitle.setObjectName("h3")
+                rcard.layout().addWidget(rtitle)
+                for k, v in rec["items"]:
+                    row = QLabel(f"{k}：{v}")
+                    row.setObjectName("muted")
+                    row.setWordWrap(True)
+                    rcard.layout().addWidget(row)
+                tip = QLabel(rec["summary"])
+                tip.setObjectName("muted")
+                tip.setWordWrap(True)
+                rcard.layout().addWidget(tip)
+                self.ov_charts.addWidget(rcard)
         except Exception:
             pass
 
@@ -1116,6 +1213,22 @@ class MainWindow(QMainWindow):
 
         # AI 页
         self.ai_text.setPlainText("点击「生成 AI 分析报告」按钮。")
+
+    # ---------------- 拖拽导入 ----------------
+    def dragEnterEvent(self, e):
+        """窗口级拖拽：接受含 .fit 文件的拖入。"""
+        if e.mimeData().hasUrls() and any(
+                u.toLocalFile().lower().endswith(".fit") for u in e.mimeData().urls()):
+            e.acceptProposedAction()
+
+    def dropEvent(self, e):
+        paths = [u.toLocalFile() for u in e.mimeData().urls()
+                 if u.toLocalFile().lower().endswith(".fit")]
+        if not paths:
+            return
+        self.statusBar().showMessage(f"正在导入 {len(paths)} 个文件…")
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        self._run_worker(self._do_import, self._on_import_done, paths)
 
     # ---------------- 导入 ----------------
     def import_files(self):

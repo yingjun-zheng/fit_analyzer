@@ -307,3 +307,13 @@ class DB:
     @_locked
     def month_activities(self, month):
         return self.list_activities(month=month)
+
+    @_locked
+    def daily_km_since(self, since_date):
+        """某日期（含）以来每日里程(km)与次数：{date_str: {km, count}}。"""
+        rows = self.conn.execute(
+            """SELECT substr(start_time,1,10) AS d, SUM(total_distance_m) AS dist, COUNT(*) AS cnt
+               FROM activities WHERE substr(start_time,1,10)>=? GROUP BY d""",
+            (since_date,)).fetchall()
+        return {r["d"]: {"km": round((r["dist"] or 0) / 1000.0, 1), "count": r["cnt"]}
+                for r in rows}
