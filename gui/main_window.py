@@ -2,6 +2,7 @@
 import logging
 import os
 import random
+import sys
 import threading
 import time
 from pathlib import Path
@@ -50,8 +51,26 @@ log = logging.getLogger("fit.gui")
 MONTH, ACTIVITY = 0, 1
 
 
+def _app_icon_path():
+    """定位 logo 图片（兼容源码运行与 PyInstaller 打包后的 _MEIPASS）。"""
+    rel = Path("imgs") / "logo.png"
+    base = getattr(sys, "_MEIPASS", None)
+    if base:
+        cand = Path(base) / rel
+        if cand.exists():
+            return cand
+    # 源码运行：相对本文件向上到项目根
+    return Path(__file__).parent.parent / rel
+
+
 def make_app_icon():
-    """程序/托盘图标（QPainter 绘制，无需图片文件）。"""
+    """程序/托盘图标：优先加载 imgs/logo.png，缺失时回退 QPainter 绘制。"""
+    logo = _app_icon_path()
+    if logo.exists():
+        pm = QPixmap(str(logo))
+        if not pm.isNull():
+            return pm
+        log.warning("logo 图片加载失败，回退绘制: %s", logo)
     pm = QPixmap(64, 64)
     pm.fill(Qt.transparent)
     p = QPainter(pm)
@@ -128,6 +147,7 @@ class MainWindow(QMainWindow):
         self.cur_analysis = None
         self.cur_laps = []
         self._workers = []
+        self._tss_fill_running = False
 
         self.setWindowTitle(f"{config.get('app_name')} v{config.get('version')}")
         self.setWindowIcon(QIcon(make_app_icon()))
@@ -670,7 +690,7 @@ class MainWindow(QMainWindow):
 
         # 训练负荷趋势（CTL/ATL/TSB，全量数据）
         self._clear_layout(self.mv_load_holder)
-        self._render_training_load(months)
+        self._render_training_load()
 
         self.mv_table.setRowCount(len(acts))
         for r, a in enumerate(acts):
@@ -694,31 +714,33 @@ class MainWindow(QMainWindow):
         if item is not None and item.data(Qt.UserRole):
             self.show_activity(item.data(Qt.UserRole))
 
-    def _render_training_load(self, months):
-        """渲染训练负荷趋势图（CTL/ATL/TSB）：全量活动数据计算，跨月展示。"""
+    def _render_training_load(self):
+        """渲染训练负荷趋势图（CTL/ATL/TSB）：优先读 DB 缓存即时出图，缺的放后台补算后重绘。"""
         from core import training_load
 
-        ftp = self.config.get("ftp_w") or None
-        max_hr_override = self.config.get("hr_max_override") or None
-        daily = []
-        for act in self.db.list_activities(limit=200):
-            records = self.db.get_records(act["id"])
-            hrs = [r.get("hr") for r in records if r.get("hr")]
-            mhr = max_hr_override or (max(hrs) if hrs else act.get("max_hr"))
-            tss, _, _, _, _ = training_load.compute_activity_tss(
-                records, config=self.config, ftp=ftp, max_hr=mhr)
-            d = (act.get("start_time") or "")[:10]
-            if tss and d:
-                daily.append((d, tss))
+        acts = self.db.list_activities(limit=200)
+        sig = training_load.tss_signature(self.config)
+        daily, missing = training_load.partition_cached_tss(acts, sig)
 
-        if not daily:
+        if daily:
+            self._draw_load_chart(daily)
+        if missing:
+            if self._tss_fill_running:
+                return
+            if not daily:
+                self.mv_load_holder.addWidget(QLabel("训练负荷后台计算中…（首次导入或设置变更后需补算）"))
+            self._tss_fill_running = True
+            self._run_worker(self._do_fill_tss, self._on_fill_tss_done, missing)
+        elif not daily:
             self.mv_load_holder.addWidget(QLabel("暂无训练负荷数据（需要心率或功率数据）。"))
-            return
+
+    def _draw_load_chart(self, daily):
+        """由每日 TSS 画 CTL/ATL/TSB 三线图（全量数据按日历天连续衰减）。"""
+        from core import training_load
 
         daily_sorted = training_load.daily_tss_from_activities(daily)
         ctls, atls, tsbs, latest = training_load.build_performance_curve(daily_sorted)
         dates = [d for d, _ in daily_sorted]
-
         if not dates:
             return
 
@@ -744,6 +766,22 @@ class MainWindow(QMainWindow):
         )
         self.mv_load_holder.addWidget(view)
 
+    def _do_fill_tss(self, acts):
+        """后台补算缺失 TSS（读记录+计算在工作线程；DB 写回由主线程回调完成）。"""
+        from core import training_load
+        return training_load.compute_missing_tss(self.db, acts, config=self.config, save=False)
+
+    def _on_fill_tss_done(self, ok, payload):
+        self._tss_fill_running = False
+        if not ok:
+            # 失败不自动重渲染（避免「失败→重算→再失败」循环），下次切换月份再试
+            self.mv_load_holder.addWidget(QLabel(f"训练负荷计算失败：{payload}"))
+            return
+        if payload:
+            self.db.store_tss([(c["aid"], c["tss"], c["method"], c["sig"]) for c in payload])
+        self._clear_layout(self.mv_load_holder)
+        self._render_training_load()
+
     # ---------------- 活动页 ----------------
     def stat_values(self, a):
         return [
@@ -762,8 +800,10 @@ class MainWindow(QMainWindow):
             ("最大心率", f"{round(a['max_hr'])} bpm" if a.get("max_hr") is not None else "—"),
             ("最大踏频", f"{round(a['max_cad'])} rpm" if a.get("max_cad") is not None else "—"),
             ("平均温度", f"{a['avg_temp']} °C" if a.get("avg_temp") is not None else "—"),
-            ("平均功率", f"{a['avg_power']} W" if a.get("avg_power") is not None else "—"),
-            ("最大功率", f"{a['max_power']} W" if a.get("max_power") is not None else "—"),
+            ("平均功率（估算）" if a.get("power_estimated") else "平均功率",
+             f"{a['avg_power']} W" if a.get("avg_power") is not None else "—"),
+            ("最大功率（估算）" if a.get("power_estimated") else "最大功率",
+             f"{a['max_power']} W" if a.get("max_power") is not None else "—"),
             ("设备", a.get("device") or "—"),
         ]
 
@@ -773,13 +813,16 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "提示", "活动不存在")
             return
         records = self.db.get_records(aid)
-        # 功率估算（无功率计时自动估算）
+        # 实测功率须在估算前判定（估算会给所有记录注入 power）
+        has_native_power = any(r.get("power") is not None for r in records)
+        # 功率估算（无功率计时自动估算，带 power_estimated 标记）
         records = analysis.estimate_power(records, self.config)
-        # 计算平均/最大功率
+        # 计算平均/最大功率（估算值在界面上需标注「估算」）
         powers = [r["power"] for r in records if r.get("power") is not None]
         if powers:
             act["avg_power"] = round(sum(powers) / len(powers))
             act["max_power"] = max(powers)
+            act["power_estimated"] = not has_native_power
         self.cur_records = records
         laps = self.db.get_laps(aid)
         self.cur_activity = act
@@ -959,7 +1002,7 @@ class MainWindow(QMainWindow):
         if power_pts:
             xs = [p["t"] for p in power_pts]
             ys = [p["v"] for p in power_pts]
-            has_native = any(r.get("power") is not None for r in records)
+            has_native = any(r.get("power") is not None and not r.get("power_estimated") for r in records)
             label = "功率 (W) — 时间" if has_native else "估算功率 (W) — 时间"
             c = self._card()
             c.layout().addWidget(ch.line_chart_time(label, xs, ys, "#f57c00", "W", 320, "%.0f"))

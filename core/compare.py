@@ -93,7 +93,8 @@ def _compare_field(label, a, b, unit="", invert=False):
         return None
     delta = round(a - b, 1)
     if delta == 0:
-        return {"label": label, "a": a, "b": b, "delta": delta, "unit": unit, "verdict": "持平"}
+        return {"label": label, "a": a, "b": b, "delta": delta, "unit": unit,
+                "direction": "持平", "improved": None, "verdict": "持平"}
     # 方向：更优 baseline 记 better/better_invert
     better = (delta < 0) != invert
     return {

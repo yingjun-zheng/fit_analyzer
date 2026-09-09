@@ -1,6 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 """PyInstaller 打包配置（PySide6 桌面版）。"""
 import os
+import sys
 from pathlib import Path
 
 ROOT = Path(SPECPATH).parent
@@ -10,6 +11,7 @@ ICON = str(ROOT / "build" / "icon.ico")
 DATAS = [
     (str(ROOT / "backgrounds"), "backgrounds"),
     (str(ROOT / "back9.jpeg"), "."),
+    (str(ROOT / "imgs" / "logo.png"), "imgs"),
 ]
 # 轨迹地图用到的高德 WebEngine 组件：amap_track.py 用 try/except 包住顶层 import，
 # 显式声明 hiddenimports 确保 PyInstaller 收集 WebEngine hook 及其资源（进程/翻译/库）。
@@ -42,6 +44,29 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
+
+# _ssl.pyd 只能与构建用 Python 配套的 OpenSSL DLL（DLLs/libcrypto|libssl-3-x64.dll）协作。
+# PyInstaller 的依赖分析按 PATH 搜索同名 DLL，构建环境里若有其它来源的
+# libcrypto-3-x64.dll（如 Git 自带），会抓到旧版导致运行时
+# "ImportError: DLL load failed while importing _ssl"。此处强制替换为配套版本。
+_DLLS_DIR = Path(sys.base_prefix) / "DLLs"
+_SSL_DLLS = {name: str(_DLLS_DIR / name)
+             for name in ("libcrypto-3-x64.dll", "libssl-3-x64.dll")
+             if (_DLLS_DIR / name).exists()}
+if _SSL_DLLS:
+    _seen = set()
+    _fixed = []
+    for dest, src, kind in a.binaries:
+        name = Path(dest).name
+        if name in _SSL_DLLS:
+            if name in _seen:
+                continue  # 重复项丢弃
+            _seen.add(name)
+            _fixed.append((dest, _SSL_DLLS[name], kind))  # 替换为配套版本
+        else:
+            _fixed.append((dest, src, kind))
+    a.binaries = _fixed
+
 pyz = PYZ(a.pure)
 
 exe = EXE(

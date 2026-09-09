@@ -1,6 +1,8 @@
 """SQLite 存储：活动/记圈/逐条记录 + 月度汇总查询。"""
+import functools
 import logging
 import sqlite3
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -36,7 +38,8 @@ CREATE TABLE IF NOT EXISTS activities (
     avg_temp REAL, max_temp REAL, min_temp REAL,
     lat REAL, lon REAL,
     record_count INTEGER,
-    imported_at TEXT
+    imported_at TEXT,
+    tss REAL, tss_method TEXT, tss_sig TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_act_start ON activities(start_ts);
 CREATE INDEX IF NOT EXISTS idx_act_month ON activities(start_time);
@@ -62,19 +65,37 @@ CREATE INDEX IF NOT EXISTS idx_rec_act ON records(activity_id);
 """
 
 
+def _locked(fn):
+    """串行化 DB 访问。
+
+    连接是 check_same_thread=False 的共享单连接，GUI 的 Worker 线程
+    （批量导入 / 复盘 / TSS 补算）会与主线程并发调用；sqlite3 连接
+    不允许跨线程并发使用（游标递归/竞态），所有公开方法必须持锁。
+    用 RLock 是因为存在方法内部互调（month_activities → list_activities）。
+    """
+    @functools.wraps(fn)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return fn(self, *args, **kwargs)
+    return wrapper
+
+
 class DB:
     def __init__(self, path: Path):
         self.path = str(path)
+        self._lock = threading.RLock()
         self.conn = sqlite3.connect(self.path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA foreign_keys=ON")
+        self.conn.execute("PRAGMA busy_timeout=5000")
         self.conn.executescript(_SCHEMA)
         self._migrate()
         self.conn.commit()
 
+    @_locked
     def _migrate(self):
-        """旧库补新列（设备识别字段）。"""
+        """旧库补新列（设备识别字段 / TSS 缓存）。"""
         cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(activities)")}
         adds = {
             "device_brand": "TEXT",
@@ -83,12 +104,16 @@ class DB:
             "hw_version": "TEXT",
             "sw_version": "TEXT",
             "sub_sport_cn": "TEXT",
+            "tss": "REAL",
+            "tss_method": "TEXT",
+            "tss_sig": "TEXT",
         }
         for col, typ in adds.items():
             if col not in cols:
                 self.conn.execute(f"ALTER TABLE activities ADD COLUMN {col} {typ}")
                 log.info("数据库迁移：activities 增加列 %s", col)
 
+    @_locked
     def close(self):
         try:
             self.conn.close()
@@ -96,6 +121,7 @@ class DB:
             pass
 
     # ---------------- 导入 ----------------
+    @_locked
     def upsert_activity(self, data: dict):
         """写入解析结果；返回 (activity_id, is_new)。"""
         s = data["summary"]
@@ -109,8 +135,8 @@ class DB:
                 avg_speed_ms, max_speed_ms, avg_hr, max_hr, min_hr,
                 avg_cad, max_cad, calories, ascent_m, descent_m,
                 avg_alt_m, max_alt_m, min_alt_m, avg_temp, max_temp, min_temp,
-                lat, lon, record_count, imported_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                lat, lon, record_count, imported_at, tss, tss_method, tss_sig)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(file_hash) DO UPDATE SET
                 file_name=excluded.file_name, name=excluded.name,
                 device=excluded.device, device_brand=excluded.device_brand,
@@ -122,7 +148,8 @@ class DB:
                 avg_hr=excluded.avg_hr, max_hr=excluded.max_hr, avg_cad=excluded.avg_cad,
                 max_cad=excluded.max_cad, calories=excluded.calories,
                 ascent_m=excluded.ascent_m, descent_m=excluded.descent_m,
-                record_count=excluded.record_count, imported_at=excluded.imported_at
+                record_count=excluded.record_count, imported_at=excluded.imported_at,
+                tss=excluded.tss, tss_method=excluded.tss_method, tss_sig=excluded.tss_sig
             """,
             (
                 data["file_hash"], data["file_name"], data["name"], data["device"],
@@ -136,6 +163,7 @@ class DB:
                 s["avg_temp"], s["max_temp"], s["min_temp"],
                 s["lat"], s["lon"], data["record_count"],
                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                None, None, None,  # tss 缓存：重新导入同文件时记录被整体替换，缓存一并失效
             ),
         )
         # 冲突更新时 lastrowid 不可靠，统一按 file_hash 查询 id
@@ -164,6 +192,15 @@ class DB:
         self.conn.commit()
         return aid, is_new
 
+    @_locked
+    def store_tss(self, rows):
+        """批量写回活动 TSS 缓存。rows: [(activity_id, tss, method, sig)]。"""
+        self.conn.executemany(
+            "UPDATE activities SET tss=?, tss_method=?, tss_sig=? WHERE id=?",
+            [(tss, method, sig, aid) for aid, tss, method, sig in rows])
+        self.conn.commit()
+
+    @_locked
     def reidentify_devices(self, formatter):
         """按当前设备型号表重算所有活动的 device 显示名。
         formatter(device_brand, product, product_name, hw_version, sw_version) -> str"""
@@ -185,6 +222,7 @@ class DB:
         return n
 
     # ---------------- 查询 ----------------
+    @_locked
     def months(self):
         rows = self.conn.execute(
             """SELECT substr(start_time,1,7) AS month, COUNT(*) AS cnt,
@@ -208,6 +246,7 @@ class DB:
             })
         return out
 
+    @_locked
     def list_activities(self, month=None, limit=500):
         if month:
             rows = self.conn.execute(
@@ -218,6 +257,7 @@ class DB:
             rows = self.conn.execute("SELECT * FROM activities ORDER BY start_ts DESC LIMIT ?", (limit,)).fetchall()
         return [self._act_row(r) for r in rows]
 
+    @_locked
     def get_activity(self, aid):
         r = self.conn.execute("SELECT * FROM activities WHERE id=?", (aid,)).fetchone()
         return self._act_row(r) if r else None
@@ -233,6 +273,7 @@ class DB:
         d["has_cad"] = d["avg_cad"] is not None
         return d
 
+    @_locked
     def get_laps(self, aid):
         rows = self.conn.execute(
             "SELECT * FROM laps WHERE activity_id=? ORDER BY lap_index", (aid,)
@@ -246,6 +287,7 @@ class DB:
             out.append(d)
         return out
 
+    @_locked
     def get_records(self, aid):
         rows = self.conn.execute(
             """SELECT t, lat, lon, dist_m, speed_ms, hr, cad, alt_m, temp, power
@@ -253,12 +295,15 @@ class DB:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    @_locked
     def delete_activity(self, aid):
         self.conn.execute("DELETE FROM activities WHERE id=?", (aid,))
         self.conn.commit()
 
+    @_locked
     def count(self):
         return self.conn.execute("SELECT COUNT(*) AS c FROM activities").fetchone()["c"]
 
+    @_locked
     def month_activities(self, month):
         return self.list_activities(month=month)

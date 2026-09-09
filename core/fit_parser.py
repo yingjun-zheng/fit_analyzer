@@ -9,6 +9,8 @@ from pathlib import Path
 
 import fitparse
 
+from .analysis import accumulate_ascent_descent
+
 log = logging.getLogger("fit.parser")
 
 SEMICIRCLE = 2**31
@@ -276,19 +278,12 @@ def parse_fit_file(path: Path):
     ascent = first_num("total_ascent")
     descent = first_num("total_descent")
     if (ascent is None or descent is None) and rec_out:
-        alts = [(r["t"], r["alt_m"]) for r in rec_out if r["alt_m"] is not None]
-        if alts:
-            a = d = 0.0
-            for i in range(1, len(alts)):
-                diff = alts[i][1] - alts[i - 1][1]
-                if diff > 0:
-                    a += diff
-                else:
-                    d += -diff
-            if ascent is None:
-                ascent = a
-            if descent is None:
-                descent = d
+        # 无会话汇总时由逐条记录估算；滞回累计滤除海拔噪声（与路书爬升口径一致）
+        a, d = accumulate_ascent_descent([r["alt_m"] for r in rec_out])
+        if ascent is None:
+            ascent = a
+        if descent is None:
+            descent = d
 
     avg_alt = first_num("enhanced_avg_altitude", "avg_altitude")
     max_alt = first_num("enhanced_max_altitude", "max_altitude")

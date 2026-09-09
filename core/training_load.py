@@ -110,7 +110,8 @@ def compute_activity_tss(records, config=None, ftp=None, max_hr=None):
     ftp = ftp or (cfg.get("ftp_w") if cfg else None)
     max_hr = max_hr or (cfg.get("hr_max_override") if cfg and cfg.get("hr_max_override") else None)
 
-    has_power = any(r.get("power") is not None for r in records)
+    # 估算功率（power_estimated 标记）误差过大，不得用于 TSS，等同心率降级路径
+    has_power = any(r.get("power") is not None and not r.get("power_estimated") for r in records)
 
     if has_power and ftp:
         np_val, avg = normalized_power(records)
@@ -233,3 +234,71 @@ def recovery_advice(tsb):
     if tsb <= 25:
         return f"TSB={tsb}，恢复充分、状态良好，适合安排高强度或比赛。"
     return f"TSB={tsb}，过度恢复（训练量偏低），可适度上量。"
+
+
+# ---------------- TSS 缓存（按活动持久化，避免每次切换月份全量重算） ----------------
+#
+# TSS 只依赖三类输入：活动逐秒记录（导入后不变）、FTP（config.ftp_w）、最大心率
+# （config.hr_max_override 或活动自身数据）。per-activity 的 max_hr 随记录而来，
+# 因此缓存签名只需捕获配置级输入，任一变化整批失效重算；重新导入同文件由
+# upsert 置空缓存（db.upsert_activity）兜底。
+
+
+def tss_signature(config=None):
+    """TSS 缓存签名：捕获影响 TSS 计算的配置级输入（FTP / 最大心率覆盖值）。"""
+    ftp = (config.get("ftp_w") if config else None) or 0
+    mhr = (config.get("hr_max_override") if config else None) or 0
+    return f"v1|ftp={int(ftp)}|mhr={int(mhr)}"
+
+
+def partition_cached_tss(acts, sig):
+    """按缓存签名把活动行分成 (daily, missing)。
+
+    daily: [(date, tss)] 已缓存且有效的每日 TSS 对；
+    missing: 缓存缺失/过期的活动行（需要重算）。
+    """
+    daily, missing = [], []
+    for act in acts:
+        d = (act.get("start_time") or "")[:10]
+        if not d:
+            continue  # 无日期的活动进不了日粒度曲线，无需计算
+        if act.get("tss") is not None and (act.get("tss_sig") or "") == sig:
+            daily.append((d, act["tss"]))
+        elif (act.get("tss_sig") or "") != sig:
+            missing.append(act)
+    return daily, missing
+
+
+def compute_missing_tss(db, acts, config=None, save=True, progress_cb=None):
+    """计算缺失/过期活动的 TSS 并（可选）写回缓存。
+
+    acts: partition_cached_tss 返回的 missing 活动行。
+    save: True 时批量写回 activities（tss/tss_method/tss_sig）；
+          tss=None（无心率/功率数据）也写签名，避免每次切换月份重复空算。
+    返回 [{aid, date, tss, method, sig}]。
+
+    逐条读取记录并计算，会占用调用线程——GUI 侧应放后台线程执行。
+    """
+    sig = tss_signature(config)
+    ftp = (config.get("ftp_w") if config else None) or None
+    out = []
+    rows = []
+    for i, act in enumerate(acts):
+        records = db.get_records(act["id"])
+        mhr = (config.get("hr_max_override") if config else None) or None
+        if not mhr:
+            hrs = [r.get("hr") for r in records if r.get("hr")]
+            mhr = max(hrs) if hrs else act.get("max_hr")
+        # compute_activity_tss 内部排除估算功率：有真实功率计+FTP 走功率 TSS，否则心率 hrTSS
+        tss, method, _, _, _ = compute_activity_tss(records, config=config, ftp=ftp, max_hr=mhr)
+        out.append({
+            "aid": act["id"],
+            "date": (act.get("start_time") or "")[:10],
+            "tss": tss, "method": method, "sig": sig,
+        })
+        rows.append((act["id"], tss, method, sig))
+        if progress_cb:
+            progress_cb(i + 1, len(acts))
+    if save and rows:
+        db.store_tss(rows)
+    return out

@@ -1,6 +1,36 @@
 """统计分析：按公里分桶、速度/心率/踏频区间、海拔/温度序列、轨迹抽稀。"""
 import math
 
+# 海拔噪声阈值（米）：累计变化达到该值才计入爬升/下降
+ALTITUDE_NOISE_THRESHOLD_M = 1.0
+
+
+def accumulate_ascent_descent(eles, threshold=ALTITUDE_NOISE_THRESHOLD_M):
+    """带滞回的爬升/下降累计（参考点法），滤除 GPS/气压计海拔噪声。
+
+    维护一个参考海拔：海拔相对参考点的累计变化达到 threshold 时，
+    才把这段变化计入爬升/下降并把参考点移到当前值。阈值内的小幅抖动
+    不会灌水（朴素「正增量全加」算法会把 ±噪声 全部累成爬升）；
+    持续爬升/下降正常累计，仅整段末尾不足阈值的部分不计
+    （全程最多低估 threshold 米，可忽略）。
+    """
+    ascent = descent = 0.0
+    ref = None
+    for ele in eles:
+        if ele is None:
+            continue
+        if ref is None:
+            ref = ele
+            continue
+        d = ele - ref
+        if d >= threshold:
+            ascent += d
+            ref = ele
+        elif d <= -threshold:
+            descent += -d
+            ref = ele
+    return ascent, descent
+
 
 def _weighted_zone_times(records, value_key, boundaries):
     """按记录的时间权重统计各区间秒数。records 需按 t 升序。boundaries 为区间上边界列表。"""
@@ -205,7 +235,8 @@ def estimate_power(records, config=None):
     - F_gravity = m × g × grade（用 5 点平滑海拔差 / 水平距离）
     - F_accel = m × a（用 5 点平滑速度差，clamp ±1.5 m/s²）
 
-    参数从 config 读取（默认值可覆盖）；返回 list[dict] 同 records 结构，附加 power 字段。
+    参数从 config 读取（默认值可覆盖）；返回 list[dict] 同 records 结构，估算出的记录
+    附加 power 字段并带 power_estimated=True 标记（导出/展示/TSS 均不得当作实测功率）。
     如果 records 已有功率计数据，直接返回原数据。
     """
     # 如果已有功率计数据，不估算
@@ -267,6 +298,7 @@ def estimate_power(records, config=None):
 
         power = (f_roll + f_air + f_gravity + f_accel) * speed
         r2["power"] = round(max(0.0, power))
+        r2["power_estimated"] = True
         result.append(r2)
         prev = r2
 

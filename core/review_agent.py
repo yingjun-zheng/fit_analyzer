@@ -179,8 +179,20 @@ def _run_compare(ai, db, config, question, current_activity=None):
     acts = db.list_activities(limit=50)
     if len(acts) < 2:
         return {"intent": "compare", "answer": "至少需要两次骑行记录才能做对比复盘。"}
-    # 找最相似的两条（优先同路线且日期相邻）
-    new_a, old_b = acts[0], acts[1]
+    # 找与最新活动最相似的旧活动（日期从近到远）：
+    # 先按总里程 ±10%（与 same_route 口径一致）免读记录粗筛，
+    # 里程近似才读逐秒记录验证起终点是否同路线；都不命中则退回次新活动。
+    new_a = acts[0]
+    old_b = acts[1]
+    dist_a = new_a.get("total_distance_m") or 0
+    if dist_a > 0:
+        for cand in acts[1:]:
+            dist_b = cand.get("total_distance_m") or 0
+            if dist_b <= 0 or abs(dist_a - dist_b) / max(dist_a, dist_b) > 0.10:
+                continue
+            if compare.same_route(db.get_records(new_a["id"]), db.get_records(cand["id"])):
+                old_b = cand
+                break
     result = compare.compare_two(db, new_a, old_b, config)
     # 组织成给 LLM 的结构化文本
     lines = ["以下是对比复盘的数据（A 为较新，B 为较旧）：", ""]
@@ -192,8 +204,12 @@ def _run_compare(ai, db, config, question, current_activity=None):
                  f"爬升 {b['ascent_m']}m{' 心率 ' + str(b['avg_hr']) + 'bpm' if b['avg_hr'] else ''}")
     lines.append("")
     for d in result["diffs"]:
-        arrow = "▲" if d["direction"] == "上升" else "▼"
-        verdict = "（改善）" if d["improved"] else "（退步/需关注）"
+        direction = d.get("direction")
+        arrow = {"上升": "▲", "下降": "▼"}.get(direction, "—")
+        if direction == "持平" or d.get("improved") is None:
+            verdict = "（持平）"
+        else:
+            verdict = "（改善）" if d["improved"] else "（退步/需关注）"
         lines.append(f"- {d['label']}：{arrow} {d['delta']}{d['unit']} {verdict}")
     system = ("你是骑行教练，根据对比数据用中文点评进步/退步、分析原因（训练/天气/路线差异），"
               "并给出下一步建议。不要用 Markdown 标题。")
@@ -208,26 +224,13 @@ def _run_compare(ai, db, config, question, current_activity=None):
 def _run_load(ai, db, config, question, current_activity=None):
     from . import training_load
     acts = db.list_activities(limit=90)  # 近几十条，覆盖数周
-    ftp = config.get("ftp_w") or None
-    max_hr_override = config.get("hr_max_override") or None
-    daily = []
-    meta = []
-    for act in acts:
-        records = db.get_records(act["id"])
-        # 单次最大心率（无 override 时）
-        mhr = max_hr_override
-        if not mhr:
-            hrs = [r.get("hr") for r in records if r.get("hr") is not None]
-            mhr = max(hrs) if hrs else act.get("max_hr")
-        # compute_activity_tss 内部自行判断：有真实功率计 + FTP → 功率 TSS；
-        # 否则有心率 → hrTSS。注意：不能用估算功率算 TSS（误差过大），
-        # 因此这里不调 estimate_power。
-        tss, method, np_w, avg_w, intensity = training_load.compute_activity_tss(
-            records, config=config, ftp=ftp, max_hr=mhr)
-        d = (act.get("start_time") or "")[:10]
-        if tss is not None:
-            daily.append((d, tss))
-        meta.append({"date": d, "tss": tss, "method": method})
+    # TSS 走 DB 缓存（compute_activity_tss 内部排除估算功率），缺失/过期的现场补算
+    sig = training_load.tss_signature(config)
+    daily, missing = training_load.partition_cached_tss(acts, sig)
+    computed = training_load.compute_missing_tss(db, missing, config=config) if missing else []
+    for c in computed:
+        if c["tss"] is not None and c["date"]:
+            daily.append((c["date"], c["tss"]))
     if not daily:
         return {"intent": "load", "answer": "缺少心率和功率数据，无法计算训练负荷。"}
     daily_sorted = training_load.daily_tss_from_activities(daily)

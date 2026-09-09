@@ -14,14 +14,14 @@ if (-not (Test-Path $python)) {
 
 Write-Host "生成图标 ..."
 & $python -c @"
-from PIL import Image, ImageDraw
-img = Image.new('RGBA', (64, 64), (0, 0, 0, 0))
-d = ImageDraw.Draw(img)
-d.ellipse([4, 4, 60, 60], fill=(30, 144, 255, 255))
-d.line([(10,44),(20,26),(30,34),(40,16),(52,26)], fill=(255,255,255,255), width=5, joint='curve')
-d.ellipse([36,11,45,20], fill=(255,220,60,255))
-d.ellipse([46,21,58,33], fill=(255,255,255,255))
-img.save(r'$root\build\icon.ico', sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])
+from PIL import Image
+src = Image.open(r'$root\imgs\logo.png').convert('RGBA')
+# 以透明底居中，等比缩放为正方形（ico 要求方图）
+w, h = src.size
+s = max(w, h)
+canvas = Image.new('RGBA', (s, s), (0, 0, 0, 0))
+canvas.paste(src, ((s - w) // 2, (s - h) // 2))
+canvas.save(r'$root\build\icon.ico', sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])
 print('icon ok')
 "@
 

@@ -24,6 +24,8 @@
 import math
 import xml.etree.ElementTree as ET
 
+from .analysis import accumulate_ascent_descent
+
 NS_GPX = "http://www.topografix.com/GPX/1/1"
 
 # 注册默认命名空间，避免 toprettyxml 序列化时加 ns0: 前缀
@@ -197,22 +199,10 @@ def enrich_elevation_from_api(route, max_query_points=200):
 def _compute_elevation(route):
     """填充累计爬升/下降、最高最低点、海拔剖面。"""
     points = route["points"]
-    ascent = 0.0
-    descent = 0.0
-    prev_ele = None
     eles = [p["ele"] for p in points if p.get("ele") is not None]
 
-    for p in points:
-        ele = p.get("ele")
-        if ele is None:
-            continue
-        if prev_ele is not None:
-            d = ele - prev_ele
-            if d > 0:
-                ascent += d
-            elif d < 0:
-                descent -= d
-        prev_ele = ele
+    # 滞回累计：滤除 GPS 海拔抖动，防止噪声灌水虚增爬升
+    ascent, descent = accumulate_ascent_descent(eles)
 
     route["total_ascent_m"] = round(ascent, 1)
     route["total_descent_m"] = round(descent, 1)

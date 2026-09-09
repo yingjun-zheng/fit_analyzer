@@ -88,15 +88,19 @@ def export_gpx(act, records, laps=None, output_path=None):
     # 按记圈分 trkseg；无记圈时一个 trkseg 包含全部记录
     segs = []
     if laps:
-        # 按 lap 时间范围分组
+        # laps 数据没有起始偏移字段，用各圈 timer_s 逐圈累加推算时间窗；
+        # 落在所有圈之外的时刻（计时暂停/圈时长相加误差）归入最后一圈。
+        bounds = []
+        acc = 0.0
         for lap in laps:
-            segs.append([])
+            dur = lap.get("timer_s") or 0.0
+            bounds.append((acc, acc + dur))
+            acc += dur
+        segs = [[] for _ in laps]
         for r in records:
             rt = r.get("t", 0)
-            for i, lap in enumerate(laps):
-                lap_start = lap.get("timer_s_offset", 0)
-                lap_end = lap_start + (lap.get("timer_s") or 0)
-                if lap_start <= rt < lap_end or i == len(laps) - 1:
+            for i, (lap_start, lap_end) in enumerate(bounds):
+                if lap_start <= rt < lap_end:
                     segs[i].append(r)
                     break
             else:
@@ -134,7 +138,9 @@ def export_gpx(act, records, laps=None, output_path=None):
             cad = r.get("cad")
             temp = r.get("temp")
             speed = r.get("speed_ms")
-            power = r.get("power")
+            # 带 power_estimated 标记的是物理模型估算值，不是码表实测：
+            # 写进 GPX 会被 Strava/佳明等平台当作实测功率，必须剔除。
+            power = None if r.get("power_estimated") else r.get("power")
 
             if any(v is not None for v in (hr, cad, temp, speed, power)):
                 seen_any_ext = True
