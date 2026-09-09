@@ -12,7 +12,7 @@ A free, local, offline **cycling FIT data analysis tool** (pure desktop Windows 
 - **Ride calendar heatmap**: last 6 months colored by daily distance (GitHub-contribution style), hover for per-day detail
 - **Training load trend**: monthly view shows CTL (fitness) / ATL (fatigue) / TSB (form) as three curves, computed with daily calendar-day decay over all data
 - **Route analysis**: one-click convert a historical activity to a route, GPX route import, climb-segment highlighting on the elevation profile (Cat4~HC five levels), AI route difficulty interpretation
-- **Route planning**: interactive point selection on AMap (XOSS style), waypoint chaining, GCJ-02 → WGS-84 coordinate correction
+- **Route planning**: interactive point selection on AMap (XOSS style), waypoint chaining, GCJ-02 → WGS-84 coordinate correction, map auto-centered on your most recent ride start (local data, offline)
 - **Auto route planning**: describe your needs in one sentence (e.g. "Beijing to Tianjin, rest every 35 km, where there is supply"), AI parsing + segmented relay + nearby rest-point marking — ideal for long-distance / cross-city rides
 - **Heart-rate zone deep summary**: turn 5-zone HR distribution into training-structure diagnosis (aerobic / threshold / anaerobic proportions + pace comparison + advice)
 - **Nutrition plan**: quantified hydration / carbohydrate / electrolyte recommendations by distance / time / intensity / temperature
@@ -133,6 +133,8 @@ Toolbar "🧭 Route planning" opens the map-interactive route planner (XOSS-styl
 1. **Click to add waypoints** on the AMap on the left (with numbered markers); the right-side list syncs in real time
 2. Waypoints are planned by AMap cycling routing (segmented planning + splicing), avoiding "rocket straight lines" between start and end, keeping to actual ridable roads
 3. Click "Plan route" to generate and render on the map; click "Convert to route analysis" to reuse the route dialog (altitude / climb / AI / export)
+
+> **Start-point location**: when the map opens, the view is centered on the **GPS start point of your most recent ride**; the "✨ Auto route planning" dialog also offers a "📍 Recent start" one-click fill. Location is read only from the **local database** (the latest activity with GPS) — no positioning or network request is made, nothing leaves your machine.
 
 **Dependency**: fill in an AMap "**Web service**" key under Settings → AMap route planning (a different key type from the track page's "Web JS API" key). Personal certification offers tens of thousands of free calls per month — plenty for personal use.
 

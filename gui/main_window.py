@@ -1577,14 +1577,14 @@ class MainWindow(QMainWindow):
         """打开路径规划对话框（地图点击选点）。"""
         from gui.route_plan_map import PlanDialog
         dlg = PlanDialog(self.config, ai_client_factory=self._ai_client,
-                         ai_enabled=self.config.get("ai_enabled"), parent=self)
+                         ai_enabled=self.config.get("ai_enabled"), parent=self, db=self.db)
         dlg.exec()
 
     def open_auto_plan(self):
         """打开输入内容自动规划对话框（自然语言 → 分段接力 → 休息点标定）。"""
         from gui.auto_plan_dialog import AutoPlanDialog
         dlg = AutoPlanDialog(self.config, ai_client_factory=self._ai_client,
-                             ai_enabled=self.config.get("ai_enabled"), parent=self)
+                             ai_enabled=self.config.get("ai_enabled"), parent=self, db=self.db)
         dlg.exec()
 
     def export_route(self):

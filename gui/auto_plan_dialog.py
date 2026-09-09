@@ -37,11 +37,12 @@ class _PlanWorker(QThread):
 
 
 class AutoPlanDialog(QDialog):
-    def __init__(self, config, ai_client_factory=None, ai_enabled=False, parent=None):
+    def __init__(self, config, ai_client_factory=None, ai_enabled=False, parent=None, db=None):
         super().__init__(parent)
         self.config = config
         self._ai_factory = ai_client_factory
         self._ai_enabled = ai_enabled
+        self._db = db
         self._worker = None
         self.setWindowTitle("输入内容自动规划路书（长途/跨市）")
         self.resize(560, 520)
@@ -82,7 +83,13 @@ class AutoPlanDialog(QDialog):
         self.cb_rest.addItems(["便利店", "超市", "餐馆", "加油站", "住宿", "药店"])
 
         lay.addWidget(QLabel("起点"))
-        lay.addWidget(self.ed_origin)
+        origin_row = QHBoxLayout()
+        origin_row.addWidget(self.ed_origin, 1)
+        btn_last = QPushButton("📍 最近起点")
+        btn_last.setToolTip("用本地数据库中最近一次骑行的 GPS 起点填入（纯本地数据，不联网）")
+        btn_last.clicked.connect(self._use_last_start)
+        origin_row.addWidget(btn_last)
+        lay.addLayout(origin_row)
         lay.addWidget(QLabel("终点"))
         lay.addWidget(self.ed_dest)
         lay.addWidget(QLabel("单段里程 km"))
@@ -129,6 +136,18 @@ class AutoPlanDialog(QDialog):
             self.cb_rest.setCurrentIndex(idx)
         self.status.setStyleSheet("")
         self.status.setText(f"已解析：{params.get('origin_city')} → {params.get('dest_city')}，单段 {params.get('segment_km')}km")
+
+    def _use_last_start(self):
+        """用最近一次骑行的 GPS 起点填入起点框（纯本地数据，不联网）。"""
+        if self._db is None:
+            QMessageBox.information(self, "提示", "未连接数据库")
+            return
+        pos = self._db.latest_position()
+        if not pos:
+            QMessageBox.information(self, "提示", "数据库里还没有带 GPS 的骑行记录，请先导入 FIT")
+            return
+        self.ed_origin.setText(f"{pos['lon']:.6f},{pos['lat']:.6f}")
+        self.status.setText(f"已用最近骑行起点（{pos.get('start_time', '')[:10]}），可直接修改")
 
     def _resolve_place(self, key, place, label):
         """地名消歧：多候选弹列表选择。

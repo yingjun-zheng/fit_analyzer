@@ -331,6 +331,18 @@ class DB:
         return {r["d"]: {"km": round((r["dist"] or 0) / 1000.0, 1), "count": r["cnt"]}
                 for r in rows}
 
+    @_locked
+    def latest_position(self):
+        """最近一次有 GPS 起点的活动：{lat, lon, start_time}；无返回 None。
+
+        供路书规划「定位到最近骑行起点」用——纯本地数据，不联网。
+        """
+        row = self.conn.execute(
+            """SELECT lat, lon, start_time FROM activities
+               WHERE lat IS NOT NULL AND lon IS NOT NULL
+               ORDER BY start_ts DESC LIMIT 1""").fetchone()
+        return dict(row) if row else None
+
     # ---------------- 装备台账 ----------------
     @_locked
     def gear_list(self):

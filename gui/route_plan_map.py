@@ -22,6 +22,10 @@ from PySide6.QtWidgets import (
 
 logger = logging.getLogger("fit.planmap")
 
+# WGS-84 → GCJ-02 前端纠偏 JS：与轨迹页（amap_track.py）共用同一段实现，
+# 用于把本地数据库的 WGS-84 起点坐标转换到高德 GCJ-02 地图上。
+from gui.amap_track import _WGS2GCJ as _WGS2GCJ_JS
+
 # ── 交互式规划地图 HTML 模板 ──
 # 点击地图添加途经点、途经点数字标记、路线折线渲染
 _PLAN_HTML = r"""<!DOCTYPE html>
@@ -29,6 +33,7 @@ _PLAN_HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="utf-8" />
 <script>window._AMapSecurityConfig = { securityJsCode: '__SEC__' };</script>
+<script>__WGS__</script>
 <script src="https://webapi.amap.com/loader.js"></script>
 <style>
 html,body{margin:0;height:100%;background:#0f1115}
@@ -41,12 +46,14 @@ html,body{margin:0;height:100%;background:#0f1115}
 <div class="waypoint-info" id="waypointInfo"></div>
 <script>
 var map, waypoints = [], markers = [], routeLine = null;
+var INIT_CENTER = __CENTER__;  // 最近骑行起点（WGS-84 [lng,lat]）；null 时用默认北京视野
 
 function initMap() {
     document.body.setAttribute('data-status', 'loading');
     AMapLoader.load({ key: '__KEY__', version: '2.0' }).then(function() {
         document.body.setAttribute('data-status', 'loaded');
-        map = new AMap.Map('map', { viewMode: '2D', zoom: 13, center: [116.397, 39.909] });
+        var c = INIT_CENTER ? wgs84ToGcj02(INIT_CENTER[0], INIT_CENTER[1]) : [116.397, 39.909];
+        map = new AMap.Map('map', { viewMode: '2D', zoom: 13, center: c });
         map.on('click', function(e) {
             var lng = e.lnglat.getLng();
             var lat = e.lnglat.getLat();
@@ -120,6 +127,20 @@ function renderRoute(polylineCoords) {
 </html>"""
 
 
+def build_plan_html(key, sec, init_center=None):
+    """生成路径规划地图 HTML。
+
+    init_center: WGS-84 [lng, lat]（如本地数据库里最近骑行的起点），
+    前端用纠偏 JS 转成 GCJ-02 后作为地图初始视野；None 时用默认北京视野。
+    提取为独立函数便于离屏测试（不依赖 QWebEngineView）。
+    """
+    return (_PLAN_HTML
+            .replace("__KEY__", key or "")
+            .replace("__SEC__", sec or "")
+            .replace("__WGS__", _WGS2GCJ_JS)
+            .replace("__CENTER__", json.dumps(init_center)))
+
+
 class RoutePlanMapWidget(QWidget):
     """交互式地图组件：点击选点 + 途经点管理 + 路线渲染。
 
@@ -127,11 +148,12 @@ class RoutePlanMapWidget(QWidget):
     读取 JS 变量 getWaypointsJSON() 获取途经点坐标。
     """
 
-    def __init__(self, config, parent=None):
+    def __init__(self, config, parent=None, init_center=None):
         super().__init__(parent)
         self.config = config
         self._key = (config.get("amap_key") or "").strip()
         self._sec = (config.get("amap_security") or "").strip()
+        self._init_center = init_center  # WGS-84 [lng, lat] 或 None
         self._waypoints = []  # [(lng, lat), ...]
 
         lay = QVBoxLayout(self)
@@ -149,8 +171,8 @@ class RoutePlanMapWidget(QWidget):
         lay.addWidget(self._web)
 
     def _load_map(self):
-        html = _PLAN_HTML.replace("__KEY__", self._key).replace("__SEC__", self._sec or "")
-        self._web.setHtml(html, QUrl("file:///"))
+        self._web.setHtml(build_plan_html(self._key, self._sec, self._init_center),
+                          QUrl("file:///"))
 
     def refresh_waypoints(self, callback):
         """通过 runJavaScript 读取 JS 里存储的途经点坐标，回调 callback(points)。"""
@@ -173,7 +195,7 @@ class RoutePlanMapWidget(QWidget):
 class PlanDialog(QDialog):
     """路径规划对话框（行者风格）：左侧交互地图 + 右侧途经点列表。"""
 
-    def __init__(self, config, ai_client_factory=None, ai_enabled=False, parent=None):
+    def __init__(self, config, ai_client_factory=None, ai_enabled=False, parent=None, db=None):
         super().__init__(parent)
         self.config = config
         self._ai_factory = ai_client_factory
@@ -181,10 +203,17 @@ class PlanDialog(QDialog):
         self.setWindowTitle("路径规划（地图点击选点）")
         self.resize(960, 640)
 
+        # 定位到最近一次骑行的 GPS 起点：纯本地数据，不发起任何定位/联网请求
+        init_center = None
+        if db is not None:
+            pos = db.latest_position()
+            if pos:
+                init_center = [pos["lon"], pos["lat"]]
+
         hlay = QHBoxLayout(self)
 
         # 左侧：地图
-        self.map_widget = RoutePlanMapWidget(config, self)
+        self.map_widget = RoutePlanMapWidget(config, self, init_center=init_center)
         hlay.addWidget(self.map_widget, 3)
 
         # 右侧：途经点列表 + 操作
@@ -222,6 +251,9 @@ class PlanDialog(QDialog):
         self.status = QLabel("")
         self.status.setWordWrap(True)
         right.addWidget(self.status)
+
+        if init_center:
+            self.status.setText("地图已定位到你最近一次骑行的 GPS 起点（本地数据，不联网）")
 
         hlay.addLayout(right, 1)
 
