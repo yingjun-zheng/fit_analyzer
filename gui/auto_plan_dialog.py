@@ -5,8 +5,8 @@
 import json
 from PySide6.QtCore import QThread, Signal, Qt
 from PySide6.QtWidgets import (
-    QDialog, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPlainTextEdit,
-    QPushButton, QVBoxLayout, QComboBox,
+    QDialog, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMessageBox,
+    QPlainTextEdit, QPushButton, QVBoxLayout, QComboBox,
 )
 
 
@@ -130,6 +130,33 @@ class AutoPlanDialog(QDialog):
         self.status.setStyleSheet("")
         self.status.setText(f"已解析：{params.get('origin_city')} → {params.get('dest_city')}，单段 {params.get('segment_km')}km")
 
+    def _resolve_place(self, key, place, label):
+        """地名消歧：多候选弹列表选择。
+
+        返回地名或 (lon, lat) 元组（plan_long_route 两者都支持）；
+        用户取消返回 None，查询失败按原地名交给规划流程兜底。
+        """
+        if not place or "," in place:
+            return place  # 已是坐标
+        from core import route_plan
+        try:
+            cands = route_plan.geocode_candidates(place, key)
+        except Exception:
+            return place
+        if not cands:
+            QMessageBox.information(
+                self, "提示", f"无法解析{label}「{place}」，请换个写法（如加城市前缀）")
+            return None
+        if len(cands) == 1:
+            return cands[0]["location"]
+        labels = [f"{c['name']}（{c['district']}）" if c["district"] else c["name"]
+                  for c in cands]
+        choice, ok = QInputDialog.getItem(
+            self, f"选择{label}", f"「{place}」有多个匹配，请选择：", labels, 0, False)
+        if not ok:
+            return None
+        return cands[labels.index(choice)]["location"]
+
     def _plan(self):
         key = (self.config.get("amap_web_key") or "").strip()
         if not key:
@@ -145,11 +172,20 @@ class AutoPlanDialog(QDialog):
         except ValueError:
             seg = 30
 
+        # 地名消歧：多候选时弹列表让用户选（选中后直接用坐标，避免再歧义）
+        name = f"{origin} → {dest}"
+        origin = self._resolve_place(key, origin, "起点")
+        if origin is None:
+            return
+        dest = self._resolve_place(key, dest, "终点")
+        if dest is None:
+            return
+
         params = {
             "origin": origin, "dest": dest,
             "segment_km": seg,
             "rest_type": self.cb_rest.currentText(),
-            "name": f"{origin} → {dest}",
+            "name": name,
         }
         self.status.setStyleSheet("color: #888;")
         self.status.setText("规划中…")

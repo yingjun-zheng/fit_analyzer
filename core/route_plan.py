@@ -62,22 +62,38 @@ def gcj02_to_wgs84(lng, lat):
     return _gcj02_to_wgs84(lng, lat)
 
 
-def geocode(address, key):
-    """地名 → (lon, lat)。失败返回 None。"""
+def geocode_candidates(address, key, limit=5):
+    """地名 → 候选坐标列表 [{name, district, location:(lon,lat)}]。
+
+    歧义地名（如「朝阳」）高德会返回多个匹配，供上层让用户人工选择；
+    geocode() 取第一个候选（保持旧行为）。
+    """
     import urllib.parse
     from . import http_utils
-    city_fallback = ""  # 让高德全国范围搜
     params = urllib.parse.urlencode({"address": address, "key": key})
     url = f"{GEOCODE_URL}?{params}"
     status, obj = http_utils.http_json(url, timeout=15)
+    out = []
     if status == 200 and isinstance(obj, dict) and obj.get("status") == "1":
-        geos = obj.get("geocodes") or []
-        if geos:
-            loc = geos[0].get("location", "")
+        for g in (obj.get("geocodes") or [])[:limit]:
+            loc = g.get("location", "")
             if loc and "," in loc:
                 lon, lat = loc.split(",", 1)
-                return float(lon), float(lat)
-    return None
+                try:
+                    out.append({
+                        "name": (g.get("name") or "").strip() or str(address),
+                        "district": (g.get("district") or g.get("city") or "").strip(),
+                        "location": (float(lon), float(lat)),
+                    })
+                except ValueError:
+                    continue
+    return out
+
+
+def geocode(address, key):
+    """地名 → (lon, lat)，取第一个候选；失败返回 None。"""
+    cands = geocode_candidates(address, key)
+    return cands[0]["location"] if cands else None
 
 
 def bicycling_plan(origin, destination, key):

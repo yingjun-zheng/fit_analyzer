@@ -10,29 +10,33 @@ FTP（功能阈值功率）是训练负荷 / 区间分析的核心锚点。有�
 """
 
 
-def best_20min_power(records, duration_s=1200):
-    """计算最佳 N 分钟平均功率（默认 20 分钟）。
+def best_avg_power(records, duration_s):
+    """最佳 N 秒平均功率（滑动窗口最大均值，前缀和 O(n)）。
 
-    records: 逐条记录（含 power 字段）；返回平均功率 W，点数不足返回 None。
+    records: 逐条记录（含 power 字段）；每条记录 ≈ 1 秒（fitparse 通常 1~3s
+    采样），用点数近似时间窗；采样稀疏时窗口缩到现有点数。
+    返回平均功率 W，点数不足/无功率返回 None。
     """
     powers = [r.get("power") for r in records if r.get("power") is not None]
     if len(powers) < 2:
         return None
-
-    # 每条记录 ≈ 1 秒（fitparse 通常 1~3s 采样），用点数近似时间窗
-    # 20 分钟 ≈ 1200 秒；若采样稀疏，按点数比例缩窗
     window = min(duration_s, len(powers))
-    best = 0.0
-    # 前缀和求最大滑动窗口平均
+    if window < 1:
+        return None
     prefix = [0.0]
     for p in powers:
         prefix.append(prefix[-1] + p)
+    best = 0.0
     for i in range(len(prefix) - window):
-        s = prefix[i + window] - prefix[i]
-        avg = s / window
+        avg = (prefix[i + window] - prefix[i]) / window
         if avg > best:
             best = avg
     return round(best, 1) if best > 0 else None
+
+
+def best_20min_power(records, duration_s=1200):
+    """最佳 20 分钟平均功率（功率曲线/FTP 估算共用）。"""
+    return best_avg_power(records, duration_s)
 
 
 def estimate_ftp(records, config=None, power_multiplier=0.95):

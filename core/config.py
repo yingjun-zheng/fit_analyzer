@@ -5,7 +5,7 @@ from pathlib import Path
 
 DEFAULTS = {
     "app_name": "骑行FIT数据分析器",
-    "version": "1.0.0",
+    "version": "1.1.0",
     # ---- 统计区间 ----
     "hr_zone_pcts": [0.6, 0.7, 0.8, 0.9],      # 心率区间边界（最大心率百分比）：5 区
     "hr_max_override": 0,                        # 0 = 用数据内最大心率

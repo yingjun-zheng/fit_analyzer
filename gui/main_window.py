@@ -183,6 +183,9 @@ class MainWindow(QMainWindow):
         act_auto_plan.triggered.connect(self.open_auto_plan)
         act_to_route = QAction("🔁 转路书", self)
         act_to_route.triggered.connect(self.export_route)
+        # 装备管家（里程驱动的保养提醒）
+        act_gear = QAction("🔧 装备管家", self)
+        act_gear.triggered.connect(self.open_gear)
         # 删除选中（批量）
         act_delete = QAction("🗑 删除选中", self)
         act_delete.triggered.connect(self.delete_selected)
@@ -195,6 +198,7 @@ class MainWindow(QMainWindow):
         tb.addAction(act_plan)
         tb.addAction(act_auto_plan)
         tb.addAction(act_to_route)
+        tb.addAction(act_gear)
         tb.addSeparator()
         tb.addAction(act_settings)
         tb.addAction(act_logs)
@@ -416,6 +420,13 @@ class MainWindow(QMainWindow):
         self.mv_heatmap = RideHeatmapWidget()
         cal_card.layout().addWidget(self.mv_heatmap)
         lay.addWidget(cal_card)
+
+        # 装备保养提醒卡（有 watch/due 的装备才显示）
+        self.mv_gear_card = self._card()
+        self.mv_gear_card.setVisible(False)
+        self.mv_gear_lay = QVBoxLayout()
+        self.mv_gear_card.layout().addLayout(self.mv_gear_lay)
+        lay.addWidget(self.mv_gear_card)
 
         # 训练负荷趋势图（CTL/ATL/TSB，全量数据）
         load_card = self._card()
@@ -699,6 +710,7 @@ class MainWindow(QMainWindow):
         self._on_ai_mode_changed()  # 同步左侧 AI 对话面板的范围提示
         self._render_year_goal(month)
         self._render_heatmap()
+        self._render_gear_reminder()
         m = next((x for x in self.db.months() if x["month"] == month), None)
         acts = self.db.list_activities(month=month)
         if m is None:
@@ -788,6 +800,25 @@ class MainWindow(QMainWindow):
         end = date.today()
         daily = self.db.daily_km_since((end - timedelta(days=26 * 7 - 1)).isoformat())
         self.mv_heatmap.set_data(daily, end)
+
+    def _render_gear_reminder(self):
+        """装备保养提醒卡：有「关注/建议更换」装备时才显示。"""
+        from core import gear as gear_mod
+
+        self._clear_layout(self.mv_gear_lay)
+        due = gear_mod.due_gears(self.db)
+        if not due:
+            self.mv_gear_card.setVisible(False)
+            return
+        title = QLabel(f"🔧 装备提醒（{len(due)} 件需要关注）")
+        title.setObjectName("h3")
+        self.mv_gear_lay.addWidget(title)
+        for s in due:
+            row = QLabel(f"· {s['name']}（{s['type'] or '装备'}）：{s['advice']}")
+            row.setObjectName("muted")
+            row.setWordWrap(True)
+            self.mv_gear_lay.addWidget(row)
+        self.mv_gear_card.setVisible(True)
 
     def _render_training_load(self):
         """渲染训练负荷趋势图（CTL/ATL/TSB）：优先读 DB 缓存即时出图，缺的放后台补算后重绘。"""
@@ -1104,6 +1135,27 @@ class MainWindow(QMainWindow):
             c = self._card()
             c.layout().addWidget(ch.line_chart_time(label, xs, ys, "#f57c00", "W", 320, "%.0f"))
             self.ov_charts.addWidget(c)
+
+        # 功率曲线：各时长最佳平均功率（1/2/5/10/20/30/60 分钟）
+        if powers:
+            try:
+                from core import ftp_estimate
+                cats, vals = [], []
+                for m in (1, 2, 5, 10, 20, 30, 60):
+                    w = ftp_estimate.best_avg_power(records, m * 60)
+                    if w is not None:
+                        cats.append(f"{m}分")
+                        vals.append(w)
+                if cats:
+                    native = any(r.get("power") is not None and not r.get("power_estimated")
+                                 for r in records)
+                    c = self._card()
+                    c.layout().addWidget(ch.line_chart_cat(
+                        ("功率曲线" if native else "估算功率曲线") + "（各时长最佳平均 W）",
+                        cats, vals, "#f57c00", "W", 280, "%.0f"))
+                    self.ov_charts.addWidget(c)
+            except Exception:
+                pass
 
         # 区间统计（Web 式自适应；短标签）
         self._clear_layout(self.zs_charts)
@@ -1484,6 +1536,11 @@ class MainWindow(QMainWindow):
         except Exception as e:
             log.exception("GPX 导出失败")
             QMessageBox.critical(self, "导出失败", str(e))
+
+    def open_gear(self):
+        """装备管家：台账 + 里程驱动的保养提醒。"""
+        from gui.gear_dialog import GearDialog
+        GearDialog(self.db, self).exec()
 
     def open_route(self):
         """打开路书分析对话框。"""

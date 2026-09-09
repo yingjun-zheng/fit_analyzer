@@ -17,6 +17,9 @@ A free, local, offline **cycling FIT data analysis tool** (pure desktop Windows 
 - **Heart-rate zone deep summary**: turn 5-zone HR distribution into training-structure diagnosis (aerobic / threshold / anaerobic proportions + pace comparison + advice)
 - **Nutrition plan**: quantified hydration / carbohydrate / electrolyte recommendations by distance / time / intensity / temperature
 - **Post-ride recovery advice**: quantified cool-down, carb refuel, protein, hydration and sleep recommendations by intensity / duration / temperature / ascent
+- **Gear maintenance manager**: consumable ledger (chain / disc pads / bar tape etc.), usage accumulated automatically from ride distance, with replacement reminders on the monthly view once expected lifespan is reached (supports maintenance reset and retirement)
+- **Power curve**: best average power over 1/2/5/10/20/30/60-minute windows (labeled "estimated" when no power meter)
+- **Place-name disambiguation**: when the auto-planner's origin/destination has multiple matches (e.g. "Chaoyang"), a picker list is shown
 - **FTP auto-estimation**: best 20-minute power × 0.95 to estimate FTP + power-to-weight ratio
 - **Ride safety analysis**: heuristic detection of sudden stops / suspected crashes (sharp speed drop + prolonged stillness)
 - **3D route view**: grade-colored 3D route (green→yellow→red) + altitude curtain, shown in route analysis
@@ -54,7 +57,7 @@ python -m venv .venv
 
 ## 2. Usage
 
-1. Open the app → toolbar "**Batch import FIT files**", select multiple `.fit` files (up to hundreds at once; re-importing auto-updates without duplicates).
+1. Open the app → toolbar "**Batch import FIT files**", select multiple `.fit` files (up to hundreds at once; re-importing auto-updates without duplicates). You can also **drag & drop** `.fit` files onto the main window to import.
 2. Training records are listed by month on the left. Click a month for the **monthly summary** (count / distance / time / ascent / calories + cross-month charts + activity list; double-click an activity for detail).
 3. Click a single activity for detail (tabs):
    - **Overview**: 16+ metric cards + per-km average speed chart + full speed/HR/cadence/altitude curves + device temperature curve
@@ -141,6 +144,16 @@ Toolbar "✨ Auto route planning" generates a long-distance route from a one-lin
 3. **Nearby rest-point marking**: at each segment junction, use AMap POI search to find supply/rest points (convenience store / supermarket / restaurant / gas station / lodging / pharmacy) attached to the route
 
 > Ideal for long-distance, cross-city, cross-province rides — for short rides use "🧭 Route planning" manual point selection; long rides are too tedious to mark manually and AMap has limited support for very long distances.
+>
+> Text origins/destinations are **disambiguated automatically**: when multiple candidates match (e.g. "Chaoyang" → Chaoyang, Beijing / Chaoyang, Changchun), a picker list is shown.
+
+## Gear maintenance manager (mileage-driven reminders)
+
+Toolbar "🔧 Gear manager" keeps a consumables ledger (chain / cassette / chainring / brake pads / tires / bar tape / shift cables etc., with common expected lifespans built in):
+
+- Gear mileage accumulates automatically from **rides since the start date** (+ initial mileage when enrolled); at 70% of expected lifespan it is marked "watch", at 100% "replace soon", and the monthly view shows a reminder card automatically
+- After replacing/servicing, click "**Reset**" to restart the clock from today; unused gear can be "**retired**" (no more reminders, mileage counted up to the retirement date)
+- v1 counts mileage across all activities (not per bike); multi-bike users can keep separate entries (e.g. "road bike - chain", "MTB - chain")
 
 ## 4. Statistics methodology
 
@@ -164,7 +177,7 @@ The "Track" page supports two modes, auto-switched:
 ## 6. Data & logs
 
 - Data directory: `%APPDATA%\FitAnalyzer\`
-  - `fit.db` SQLite database (activities / laps / per-record points)
+  - `fit.db` SQLite database (activities / laps / per-record points / gear ledger)
   - `logs\fit_analyzer.log` rolling log (2 MB × 5 files)
 - Toolbar "Logs" for live view (auto-refresh); "Data directory" opens the data folder.
 - CLI args: `--data-dir` (custom data dir), `--debug` (verbose logging), `--selftest` (offscreen self-test).
@@ -203,6 +216,7 @@ fit_analyzer/
 │   ├── auto_plan_dialog.py # auto route planning dialog (natural language + form fallback)
 │   ├── route_3d.py       # 3D route view (grade-colored route)
 │   ├── heatmap.py        # ride calendar heatmap (last 6 months by daily distance)
+│   ├── gear_dialog.py    # gear maintenance dialog (ledger + mileage reminders)
 │   ├── dialogs.py        # settings / logs dialogs
 │   └── theme.py          # styles & formatting
 ├── core/
@@ -218,6 +232,7 @@ fit_analyzer/
 │   ├── hr_summary.py     # HR zone deep summary (training structure diagnosis)
 │   ├── nutrition.py      # nutrition plan
 │   ├── recovery.py       # post-ride recovery advice
+│   ├── gear.py           # gear maintenance manager (mileage-driven reminders)
 │   ├── ftp_estimate.py   # FTP auto-estimation
 │   ├── safety.py         # ride safety analysis (sudden-stop / crash detection)
 │   ├── gpx_export.py     # GPX 1.1 export (HR/cadence/temperature/speed/power extensions)

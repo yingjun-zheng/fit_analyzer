@@ -62,6 +62,19 @@ CREATE TABLE IF NOT EXISTS records (
     speed_ms REAL, hr REAL, cad REAL, alt_m REAL, temp REAL, power REAL
 );
 CREATE INDEX IF NOT EXISTS idx_rec_act ON records(activity_id);
+
+CREATE TABLE IF NOT EXISTS gear (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    type TEXT,
+    start_date TEXT,
+    start_ts INTEGER,
+    initial_km REAL DEFAULT 0,
+    expected_km REAL DEFAULT 0,
+    note TEXT,
+    retired INTEGER DEFAULT 0,
+    retired_ts INTEGER
+);
 """
 
 
@@ -317,3 +330,50 @@ class DB:
             (since_date,)).fetchall()
         return {r["d"]: {"km": round((r["dist"] or 0) / 1000.0, 1), "count": r["cnt"]}
                 for r in rows}
+
+    # ---------------- 装备台账 ----------------
+    @_locked
+    def gear_list(self):
+        rows = self.conn.execute("SELECT * FROM gear ORDER BY retired, id DESC").fetchall()
+        return [dict(r) for r in rows]
+
+    @_locked
+    def gear_add(self, name, type_, start_date, start_ts, initial_km, expected_km, note=""):
+        cur = self.conn.execute(
+            """INSERT INTO gear (name, type, start_date, start_ts, initial_km, expected_km, note)
+               VALUES (?,?,?,?,?,?,?)""",
+            (name, type_, start_date, start_ts, initial_km, expected_km, note))
+        self.conn.commit()
+        return cur.lastrowid
+
+    _GEAR_COLS = {"name", "type", "start_date", "start_ts", "initial_km",
+                  "expected_km", "note", "retired", "retired_ts"}
+
+    @_locked
+    def gear_update(self, gid, fields):
+        """按字段更新装备（fields 的键限定为 gear 表列名）。"""
+        cols = [c for c in fields if c in self._GEAR_COLS]
+        if not cols:
+            return
+        sets = ", ".join(f"{c}=?" for c in cols)
+        self.conn.execute(f"UPDATE gear SET {sets} WHERE id=?",
+                          [fields[c] for c in cols] + [gid])
+        self.conn.commit()
+
+    @_locked
+    def gear_delete(self, gid):
+        self.conn.execute("DELETE FROM gear WHERE id=?", (gid,))
+        self.conn.commit()
+
+    @_locked
+    def sum_distance_between(self, start_ts, end_ts=None):
+        """时间窗 [start_ts, end_ts) 内活动总里程（米）；end_ts 为空表示至今。"""
+        if end_ts is None:
+            row = self.conn.execute(
+                "SELECT SUM(total_distance_m) AS d FROM activities WHERE start_ts>=?",
+                (start_ts,)).fetchone()
+        else:
+            row = self.conn.execute(
+                "SELECT SUM(total_distance_m) AS d FROM activities WHERE start_ts>=? AND start_ts<?",
+                (start_ts, end_ts)).fetchone()
+        return row["d"] or 0.0
