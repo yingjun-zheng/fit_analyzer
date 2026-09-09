@@ -41,6 +41,10 @@ A free, local, offline **cycling FIT data analysis tool** (pure desktop Windows 
 
 ![路径规划，ai自动模式](imgs/路径规划，ai自动模式.png)
 
+> Screenshots are generated automatically by `tools/make_screens.py` — after any UI
+> change, run `.venv\Scripts\python.exe tools\make_screens.py` to refresh them and keep
+> the docs in sync with the app.
+
 ---
 
 ## 1. Running
@@ -243,6 +247,7 @@ fit_analyzer/
 │   └── config.py / logging_setup.py / http_utils.py
 ├── back9.jpeg            # track background image
 ├── build/                # PyInstaller spec + pack.py + build_exe.ps1
+├── tools/                # helper tools (make_screens.py regenerates README screenshots)
 └── tests/                # smoke tests / route / route-planning unit tests
 ```
 

@@ -42,6 +42,9 @@
 
 ![路径规划，ai自动模式](imgs/路径规划，ai自动模式.png)
 
+> 界面截图由 `tools/make_screens.py` 自动生成——界面改动后运行
+> `.venv\Scripts\python.exe tools\make_screens.py` 即可一键刷新，保持文档与软件同步。
+
 ---
 
 ## 一、运行
@@ -246,6 +249,7 @@ fit_analyzer/
 │   └── config.py / logging_setup.py / http_utils.py
 ├── back9.jpeg            # 轨迹背景图
 ├── build/                # PyInstaller spec + pack.py 一键打包 + build_exe.ps1
+├── tools/                # 辅助工具（make_screens.py 重新生成 README 截图）
 └── tests/                # 冒烟测试 / 路书 / 路径规划单元测试
 ```
 

@@ -150,6 +150,10 @@ class MainWindow(QMainWindow):
         self.cur_laps = []
         self._workers = []
         self._tss_fill_running = False
+        # 视图重建缓存：同月份/同活动且数据未变时跳过整页重建（防点击闪烁）
+        self._shown_month = None
+        self._cur_month = None
+        self._shown_activity_id = None
 
         self.setWindowTitle(f"{config.get('app_name')} v{config.get('version')}")
         self.setWindowIcon(QIcon(make_app_icon()))
@@ -458,6 +462,7 @@ class MainWindow(QMainWindow):
         lay.addWidget(ai_card)
 
         # 月度页整体放入滚动区，防止内容超出窗口时显示不全
+        self.mv_page = page
         self.mv_scroll = QScrollArea()
         self.mv_scroll.setWidgetResizable(True)
         self.mv_scroll.setWidget(page)
@@ -598,6 +603,8 @@ class MainWindow(QMainWindow):
 
     # ---------------- 数据加载 ----------------
     def load_months(self):
+        self._shown_month = None        # 数据已变（导入/删除/重识别），页面需重建
+        self._shown_activity_id = None
         months = self.db.months()
         self.month_tree.clear()
         self._month_items = {}
@@ -703,11 +710,16 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("已删除", 4000)
 
     # ---------------- 月度页 ----------------
-    def show_month(self, month):
+    def show_month(self, month, force=False):
         self.stack.setCurrentWidget(self.month_page)
+        self._cur_month = month
+        self._on_ai_mode_changed()  # 同步左侧 AI 对话面板的范围提示
+        if not force and self._shown_month == month:
+            return  # 同月份数据未变：跳过整页重建（防点击闪烁）
+        self._shown_month = month
         self.mv_title.setText(f"{month} 训练汇总")
         self.mv_ai_card.setVisible(False)
-        self._on_ai_mode_changed()  # 同步左侧 AI 对话面板的范围提示
+        self.mv_page.setUpdatesEnabled(False)  # 重建期间暂停重绘，避免界面闪烁
         self._render_year_goal(month)
         self._render_heatmap()
         self._render_gear_reminder()
@@ -758,6 +770,7 @@ class MainWindow(QMainWindow):
                 self.mv_table.setItem(r, c, item)
             self.mv_table.item(r, 0).setData(Qt.UserRole, a["id"])
         self.mv_table.resizeRowsToContents()
+        self.mv_page.setUpdatesEnabled(True)  # 恢复重绘，整页一次性成屏
 
     def on_mv_table_dbl(self, row, col):
         item = self.mv_table.item(row, 0)
@@ -913,11 +926,16 @@ class MainWindow(QMainWindow):
             ("设备", a.get("device") or "—"),
         ]
 
-    def show_activity(self, aid):
+    def show_activity(self, aid, force=False):
         act = self.db.get_activity(aid)
         if act is None:
             QMessageBox.warning(self, "提示", "活动不存在")
             return
+        self.stack.setCurrentWidget(self.act_page)
+        if not force and self._shown_activity_id == aid:
+            return  # 同一条活动且数据未变：跳过整页重建（防点击闪烁）
+        self._shown_activity_id = aid
+        self.act_page.setUpdatesEnabled(False)  # 重建期间暂停重绘，避免界面闪烁
         records = self.db.get_records(aid)
         # 实测功率须在估算前判定（估算会给所有记录注入 power）
         has_native_power = any(r.get("power") is not None for r in records)
@@ -1265,6 +1283,7 @@ class MainWindow(QMainWindow):
 
         # AI 页
         self.ai_text.setPlainText("点击「生成 AI 分析报告」按钮。")
+        self.act_page.setUpdatesEnabled(True)  # 恢复重绘，整页一次性成屏
 
     # ---------------- 拖拽导入 ----------------
     def dragEnterEvent(self, e):
@@ -1504,6 +1523,11 @@ class MainWindow(QMainWindow):
     def open_settings(self):
         dlg = SettingsDialog(self.config, self, on_reidentify=self.reidentify_devices, db=self.db)
         dlg.exec()
+        # 设置可能改变统计口径/年度目标/功率估算参数 → 强制重建当前视图
+        if self.stack.currentWidget() is self.act_page and self.cur_activity is not None:
+            self.show_activity(self.cur_activity["id"], force=True)
+        elif self._cur_month is not None:
+            self.show_month(self._cur_month, force=True)
 
     def open_logs(self):
         dlg = LogsDialog(self)
