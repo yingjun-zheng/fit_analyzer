@@ -2,6 +2,7 @@
 import logging
 import os
 import random
+import re
 import sys
 import threading
 import time
@@ -371,6 +372,7 @@ class MainWindow(QMainWindow):
         return sc
 
     def _stat_card(self, key, value):
+        """KPI 卡片：数字大字 + 单位小字（运动 App 数据卡的视觉层级）。"""
         f = QFrame()
         f.setObjectName("stat")
         lay = QVBoxLayout(f)
@@ -378,8 +380,31 @@ class MainWindow(QMainWindow):
         lay.setSpacing(2)
         k = QLabel(key)
         k.setObjectName("statKey")
-        v = QLabel(value)
+        sval = str(value)
+        m = re.match(r"^(-?[\d.]+)\s*(.*)$", sval)
+        if m and len(m.group(1)) <= 6:
+            v = QLabel(m.group(1))
+            v.setObjectName("statVal")
+            unit = m.group(2)
+            if unit:
+                u = QLabel(unit)
+                u.setObjectName("statUnit")
+                row = QHBoxLayout()
+                row.setContentsMargins(0, 0, 0, 0)
+                row.setSpacing(5)
+                row.addWidget(v)
+                row.addWidget(u, 0, Qt.AlignBottom)
+                wrap = QWidget()
+                wrap.setLayout(row)
+                lay.addWidget(k)
+                lay.addWidget(wrap)
+                return f
+            lay.addWidget(k)
+            lay.addWidget(v)
+            return f
+        v = QLabel(sval)
         v.setObjectName("statVal")
+        v.setStyleSheet("font-size:14px; font-weight:600;")
         v.setWordWrap(True)
         lay.addWidget(k)
         lay.addWidget(v)

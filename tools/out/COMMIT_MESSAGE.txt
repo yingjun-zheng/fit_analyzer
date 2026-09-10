@@ -1,0 +1,10 @@
+feat(gui): 全站图表美化升级为运动App视觉风格
+
+- charts.py: 曲线统一 2.6px 粗圆头线 + 渐变面积填充（速度曲线按值蓝→青→橙渐变着色），透明背景融入卡片 + 650ms 入场动画 + 浅蓝虚线网格
+- charts.py: 新增悬停十字线 + 数值气泡（QGraphics 覆盖层；渐变分段线用透明代理序列做坐标映射）
+- charts.py: 柱状图改纵向渐变柱；修复多线图 Y 轴 auto range 只认部分系列导致 ATL 冲出图表顶部的 bug（改为显式计算范围）；图例去重（数据点系列不进图例）
+- main_window.py: KPI 卡片拆数字大字 + 单位小字（运动App数据卡视觉层级）
+- theme.py: statVal 21px 大数字样式、stat 卡悬停描边高亮
+- tools: 新增 render_charts_preview.py 离屏渲染脚本，改图表样式可先出 PNG 自查（注意需预热渲染一次再截图，否则动画未播完）
+
+已通过：8 类图表函数冒烟、hover 逻辑测试、app.py --selftest、打包后 EXE --selftest（全过）

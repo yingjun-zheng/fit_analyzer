@@ -63,9 +63,11 @@ QTabBar::tab:selected { color: #1e88e5; border-bottom: 2px solid #1e88e5; font-w
 QStatusBar { background: #ffffff; border-top: 1px solid #dde3e8; }
 QScrollArea { border: none; background: transparent; }
 QFrame#card { background: white; border: 1px solid #dde3e8; border-radius: 8px; }
-QFrame#stat { background: #f7f9fb; border: 1px solid #dde3e8; border-radius: 8px; }
+QFrame#stat { background: white; border: 1px solid #dde3e8; border-radius: 8px; }
+QFrame#stat:hover { border: 1px solid #b5d4f4; }
 QLabel#statKey { color: #7a8794; font-size: 11px; }
-QLabel#statVal { font-size: 15px; font-weight: 700; }
+QLabel#statVal { font-size: 21px; font-weight: 700; color: #12314f; }
+QLabel#statUnit { color: #7a8794; font-size: 11px; }
 QLabel#h2 { font-size: 17px; font-weight: 700; }
 QLabel#muted { color: #7a8794; font-size: 11px; }
 QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { background: white; border: 1px solid #c9d2da; border-radius: 5px; padding: 4px 8px; }

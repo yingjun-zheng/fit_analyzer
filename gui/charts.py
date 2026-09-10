@@ -1,4 +1,4 @@
-"""QtCharts 图表封装：折线图 / 柱状图。"""
+"""QtCharts 图表封装：折线图 / 柱状图（运动 App 视觉风格）。"""
 from PySide6.QtCharts import (
     QAreaSeries,
     QBarCategoryAxis,
@@ -11,11 +11,45 @@ from PySide6.QtCharts import (
     QScatterSeries,
     QValueAxis,
 )
-from PySide6.QtCore import QEvent, QMargins, QObject, Qt
-from PySide6.QtGui import QColor, QFont, QPainter, QPen
-from PySide6.QtWidgets import QApplication, QScrollArea, QSizePolicy
+from PySide6.QtCore import QEvent, QMargins, QObject, QPointF, Qt
+from PySide6.QtGui import (
+    QBrush,
+    QColor,
+    QFont,
+    QGradient,
+    QLinearGradient,
+    QPainter,
+    QPainterPath,
+    QPen,
+)
+from PySide6.QtWidgets import (
+    QApplication,
+    QFrame,
+    QGraphicsEllipseItem,
+    QGraphicsLineItem,
+    QGraphicsPathItem,
+    QGraphicsSimpleTextItem,
+    QScrollArea,
+    QSizePolicy,
+)
 
 PALETTE = ["#1e88e5", "#43a047", "#f57c00", "#8e24aa", "#e53935", "#00acc1", "#6d4c41"]
+
+# ---- 视觉规范（对标行者/Strava 的运动图表语言） ----
+PRIMARY = "#1e88e5"        # 主品牌蓝
+AXIS_TEXT = "#8a95a1"      # 坐标刻度文字
+GRID_COLOR = "#e9f0f8"     # 网格线（极浅蓝灰）
+BUBBLE_BG = "#0c447c"      # 悬停数值气泡底色
+LINE_WIDTH = 2.6           # 主曲线线宽（粗圆头）
+
+# 曲线下渐变面积的两个透明度端点（顶部可见 → 底部近透明）
+AREA_ALPHA_TOP = 88
+AREA_ALPHA_BOTTOM = 6
+
+
+def _line_pen(color, width=LINE_WIDTH):
+    """粗圆头主曲线画笔（运动 App 曲线的存在感来源）。"""
+    return QPen(QColor(color), width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
 
 
 class _WheelForward(QObject):
@@ -59,6 +93,8 @@ class _WheelForward(QObject):
 def _view(chart, height, adaptive=None):
     v = ScrollableChartView(chart, adaptive=adaptive)
     v.setRenderHint(QPainter.Antialiasing)
+    v.setFrameShape(QFrame.NoFrame)  # 无边框，融入卡片
+    v.setStyleSheet("background: transparent;")
     v.setMinimumHeight(height)
     v.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
     v._wheel_forward = _WheelForward(v)
@@ -66,12 +102,126 @@ def _view(chart, height, adaptive=None):
     return v
 
 
+def _set_track(view, series, fmt, xkind, cats=None):
+    """为悬停气泡注册追踪序列（series 需已加入 chart 并 attach 轴）。"""
+    view._track = {"series": series, "fmt": fmt, "xkind": xkind, "cats": cats}
+
+
 class ScrollableChartView(QChartView):
-    """图表视图：滚轮转发 + 自适应坐标轴（像 Web 图表一样，尺寸变化时自动调整刻度密度，永不重叠）。"""
+    """图表视图：滚轮转发 + 自适应坐标轴 + 悬停十字线数值气泡（像运动 App 一样划过看值）。"""
 
     def __init__(self, chart, adaptive=None):
         super().__init__(chart)
         self._adaptive = adaptive  # {"type": "time"|"numeric"|"cat", ...}
+        self._track = None  # {"series", "fmt", "xkind", "cats"} 由各图表函数设置
+        self.setMouseTracking(True)
+        self._init_overlay()
+
+    # ---------- 悬停十字线 + 气泡 ----------
+
+    def _init_overlay(self):
+        sc = self.scene()
+        if sc is None:
+            self._ov_line = self._ov_dot = None
+            self._ov_bubble = self._ov_text = None
+            return
+        self._ov_line = QGraphicsLineItem()
+        self._ov_line.setPen(QPen(QColor("#185fa5"), 1, Qt.DashLine))
+        self._ov_line.setZValue(30)
+        self._ov_dot = QGraphicsEllipseItem()
+        self._ov_dot.setBrush(QBrush(QColor("#ffffff")))
+        self._ov_dot.setPen(QPen(QColor(PRIMARY), 2.4))
+        self._ov_dot.setZValue(31)
+        self._ov_bubble = QGraphicsPathItem()
+        self._ov_bubble.setBrush(QBrush(QColor(BUBBLE_BG)))
+        self._ov_bubble.setPen(QPen(Qt.NoPen))
+        self._ov_bubble.setZValue(32)
+        self._ov_text = QGraphicsSimpleTextItem()
+        self._ov_text.setBrush(QBrush(QColor("#ffffff")))
+        f = QFont("Microsoft YaHei", 9)
+        f.setPixelSize(12)
+        self._ov_text.setFont(f)
+        self._ov_text.setZValue(33)
+        for it in (self._ov_line, self._ov_dot, self._ov_bubble, self._ov_text):
+            sc.addItem(it)
+            it.hide()
+
+    def _fmt_x(self, x):
+        t = self._track or {}
+        kind = t.get("xkind")
+        if kind == "time":
+            xi = int(round(x))
+            return f"{xi // 60}:{xi % 60:02d}"
+        if kind == "cat":
+            cats = t.get("cats") or []
+            i = int(round(x))
+            return str(cats[i]) if 0 <= i < len(cats) else ""
+        return f"{x:.1f}"
+
+    def _update_hover(self, pos):
+        t = self._track
+        if not t or self._ov_line is None:
+            return
+        chart = self.chart()
+        s = t.get("series")
+        if chart is None or s is None or s.count() == 0:
+            return
+        plot = chart.plotArea()
+        sp = self.mapToScene(int(pos.x()), int(pos.y()))
+        if not plot.contains(sp):
+            self._hide_overlay()
+            return
+        val = chart.mapToValue(sp, s)
+        # 按 X 最近找数据点（十字线是竖直的，跟 X 对齐最直觉）
+        best_i, best_dx = -1, float("inf")
+        for i in range(s.count()):
+            dx = abs(s.at(i).x() - val.x())
+            if dx < best_dx:
+                best_i, best_dx = i, dx
+        if best_i < 0:
+            self._hide_overlay()
+            return
+        p = s.at(best_i)
+        pp = chart.mapToPosition(p, s)
+
+        self._ov_line.setLine(pp.x(), plot.top(), pp.x(), plot.bottom())
+        r = 4.6
+        self._ov_dot.setRect(pp.x() - r, pp.y() - r, r * 2, r * 2)
+
+        text = f"{self._fmt_x(p.x())}  ·  {t.get('fmt', '%.0f') % p.y()}"
+        self._ov_text.setText(text)
+        tb = self._ov_text.boundingRect()
+        pad_x, pad_y = 8, 4
+        w, h = tb.width() + pad_x * 2, tb.height() + pad_y * 2
+        bx = pp.x() - w / 2
+        bx = max(plot.left() + 2, min(bx, plot.right() - w - 2))
+        by = pp.y() - h - 12
+        if by < plot.top() + 2:
+            by = pp.y() + 12
+        path = QPainterPath()
+        path.addRoundedRect(bx, by, w, h, 6, 6)
+        self._ov_bubble.setPath(path)
+        self._ov_text.setPos(bx + pad_x, by + pad_y)
+
+        for it in (self._ov_line, self._ov_dot, self._ov_bubble, self._ov_text):
+            it.show()
+        self.viewport().update()
+
+    def _hide_overlay(self):
+        if self._ov_line is None:
+            return
+        for it in (self._ov_line, self._ov_dot, self._ov_bubble, self._ov_text):
+            it.hide()
+
+    def mouseMoveEvent(self, e):
+        super().mouseMoveEvent(e)
+        self._update_hover(e.position())
+
+    def leaveEvent(self, e):
+        self._hide_overlay()
+        super().leaveEvent(e)
+
+    # ---------- 自适应坐标轴 ----------
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
@@ -120,6 +270,7 @@ class ScrollableChartView(QChartView):
                 new_ax = QCategoryAxis()
                 new_ax.setLabelsPosition(QCategoryAxis.AxisLabelsPositionOnValue)
                 new_ax.setLabelsFont(_axis_font())
+                new_ax.setLabelsColor(QColor(AXIS_TEXT))
                 _no_title(new_ax)
                 for t0 in range(0, int(maxv) + step, step):
                     new_ax.append(f"{t0 // 60}:{t0 % 60:02d}", float(t0))
@@ -143,11 +294,66 @@ class ScrollableChartView(QChartView):
 
 def _style(chart, title):
     chart.setTitle(title)
+    chart.setTitleBrush(QColor("#26313b"))
     chart.legend().hide()
-    chart.setTheme(QChart.ChartThemeLight)
-    chart.setMargins(QMargins(6, 6, 6, 6))
-    f = QFont("Microsoft YaHei", 9)
+    chart.setBackgroundVisible(False)  # 透明背景，融入卡片
+    chart.setMargins(QMargins(4, 8, 10, 4))
+    f = QFont("Microsoft YaHei", 10)
+    f.setWeight(QFont.DemiBold)
     chart.setTitleFont(f)
+    # 入场动画：曲线生长感（Web 图表的"活"感来源）
+    chart.setAnimationOptions(QChart.SeriesAnimations)
+    chart.setAnimationDuration(650)
+
+
+def _style_axis(ax, grid=True):
+    """统一轴样式：灰字、无轴线、浅虚线网格。"""
+    ax.setLabelsColor(QColor(AXIS_TEXT))
+    ax.setLineVisible(False)
+    if grid:
+        ax.setGridLinePen(QPen(QColor(GRID_COLOR), 1, Qt.DashLine))
+    else:
+        ax.setGridLineVisible(False)
+    return ax
+
+
+def _add_gradient_area(chart, series, ax_x, ax_y, color, base):
+    """在主曲线下叠加渐变面积填充（上界=曲线，下界=base 基线）。
+
+    渐变：顶部 alpha≈0.35 → 底部近透明。QAreaSeries 的上下界序列
+    必须保持存活引用（挂到 area 上），否则 GC 后渲染段错误。
+    """
+    n = series.count()
+    if n < 2:
+        return None
+    upper = QLineSeries()
+    for i in range(n):
+        upper.append(series.at(i))
+    x0 = upper.at(0).x()
+    x1 = upper.at(n - 1).x()
+    if x1 <= x0:
+        return None
+    lower = QLineSeries()
+    lower.append(x0, base)
+    lower.append(x1, base)
+
+    area = QAreaSeries(upper, lower)
+    g = QLinearGradient(0.0, 0.0, 0.0, 1.0)
+    g.setCoordinateMode(QGradient.ObjectBoundingMode)
+    c_top = QColor(color)
+    c_top.setAlpha(AREA_ALPHA_TOP)
+    c_bot = QColor(color)
+    c_bot.setAlpha(AREA_ALPHA_BOTTOM)
+    g.setColorAt(0.0, c_top)
+    g.setColorAt(1.0, c_bot)
+    area.setBrush(QBrush(g))
+    area.setPen(QPen(Qt.NoPen))
+    chart.addSeries(area)
+    area.attachAxis(ax_x)
+    area.attachAxis(ax_y)
+    area.upperSeriesRef = upper  # 防 GC（同爬坡色带的做法）
+    area.lowerSeriesRef = lower
+    return area
 
 
 def _axis_font(size=8):
@@ -168,6 +374,7 @@ def _x_axis_numeric():
     ax.setLabelFormat("%.0f")
     ax.setTickCount(6)  # 横轴最多 6 个刻度，防标签重叠
     ax.setLabelsFont(_axis_font())
+    _style_axis(ax)
     return _no_title(ax)
 
 
@@ -177,16 +384,16 @@ def _y_axis(label, fmt):
     ax.setLabelFormat(fmt)
     ax.setTickCount(5)  # 纵轴固定 5 个刻度，防标签重叠
     ax.setLabelsFont(_axis_font())
-    ax.setGridLineVisible(True)
+    _style_axis(ax)
     return _no_title(ax)
 
 
 def line_chart(title, xs, ys, color="#1e88e5", y_label="", height=200, fmt="%.0f"):
-    """数值 X 轴折线图。"""
+    """数值 X 轴折线图：粗圆头线 + 曲线下渐变面积。"""
     chart = QChart()
     _style(chart, title)
     s = QLineSeries()
-    s.setPen(QPen(QColor(color), 1.6))
+    s.setPen(_line_pen(color))
     for x, y in zip(xs, ys):
         if y is None:
             continue
@@ -198,15 +405,20 @@ def line_chart(title, xs, ys, color="#1e88e5", y_label="", height=200, fmt="%.0f
     chart.addAxis(ax_y, Qt.AlignLeft)
     s.attachAxis(ax_x)
     s.attachAxis(ax_y)
-    return _view(chart, height, adaptive={"type": "numeric"})
+    valid = [y for y in ys if y is not None]
+    if len(valid) >= 2:
+        _add_gradient_area(chart, s, ax_x, ax_y, color, min(valid))
+    v = _view(chart, height, adaptive={"type": "numeric"})
+    _set_track(v, s, fmt, "num")
+    return v
 
 
 def line_chart_time(title, xs_sec, ys, color="#1e88e5", y_label="", height=200, fmt="%.0f"):
-    """X 轴为时间（mm:ss 标签，最多 6 个防重叠）。"""
+    """X 轴为时间（mm:ss 标签）：粗圆头线 + 曲线下渐变面积 + 悬停气泡。"""
     chart = QChart()
     _style(chart, title)
     s = QLineSeries()
-    s.setPen(QPen(QColor(color), 1.6))
+    s.setPen(_line_pen(color))
     for x, y in zip(xs_sec, ys):
         if y is None:
             continue
@@ -215,6 +427,7 @@ def line_chart_time(title, xs_sec, ys, color="#1e88e5", y_label="", height=200, 
     ax_x = QCategoryAxis()
     ax_x.setLabelsPosition(QCategoryAxis.AxisLabelsPositionOnValue)
     _no_title(ax_x)
+    _style_axis(ax_x, grid=False)
     ax_x.setLabelsFont(_axis_font())
     maxv = max(xs_sec) if xs_sec else 0
     import math
@@ -232,23 +445,28 @@ def line_chart_time(title, xs_sec, ys, color="#1e88e5", y_label="", height=200, 
     chart.addAxis(ax_y, Qt.AlignLeft)
     s.attachAxis(ax_x)
     s.attachAxis(ax_y)
-    return _view(chart, height, adaptive={"type": "time", "xs": list(xs_sec)})
+    valid = [y for y in ys if y is not None]
+    if len(valid) >= 2:
+        _add_gradient_area(chart, s, ax_x, ax_y, color, min(valid))
+    v = _view(chart, height, adaptive={"type": "time", "xs": list(xs_sec)})
+    _set_track(v, s, fmt, "time")
+    return v
 
 
 def line_chart_cat(title, categories, values, color="#1e88e5", y_label="", height=220, fmt="%.0f"):
-    """类别 X 轴折线图（X 轴为字符串类别，如月份/公里序号）。带数据点标记。"""
+    """类别 X 轴折线图（X 轴为字符串类别，如月份/公里序号）。粗线 + 渐变面积 + 数据点。"""
     chart = QChart()
     _style(chart, title)
 
     line = QLineSeries()
-    line.setPen(QPen(QColor(color), 1.8))
+    line.setPen(_line_pen(color))
     for i, v in enumerate(values):
         line.append(float(i), float(v or 0))
     chart.addSeries(line)
 
-    # 数据点标记
+    # 数据点标记（白芯圆点，运动 App 风格）
     pts = QScatterSeries()
-    pts.setMarkerSize(6.0)
+    pts.setMarkerSize(9.0)
     pts.setColor(QColor(color))
     pts.setBorderColor(QColor("#ffffff"))
     for i, v in enumerate(values):
@@ -258,37 +476,55 @@ def line_chart_cat(title, categories, values, color="#1e88e5", y_label="", heigh
     ax_x = QCategoryAxis()
     ax_x.setLabelsPosition(QCategoryAxis.AxisLabelsPositionOnValue)
     _no_title(ax_x)
+    _style_axis(ax_x, grid=False)
     ax_x.setLabelsFont(_axis_font())
-    ax_x.setGridLineVisible(False)
     for i, c in enumerate(categories):
         ax_x.append(str(c), float(i))
     ax_x.setRange(0, float(max(len(categories) - 1, 1)))
     ax_y = _y_axis(y_label, fmt)
-    ax_y.setGridLineColor(QColor("#e8e8e8"))
     chart.addAxis(ax_x, Qt.AlignBottom)
     chart.addAxis(ax_y, Qt.AlignLeft)
     line.attachAxis(ax_x)
     line.attachAxis(ax_y)
     pts.attachAxis(ax_x)
     pts.attachAxis(ax_y)
-    return _view(chart, height, adaptive={"type": "numeric"})
+
+    valid = [v for v in values if v is not None]
+    if len(valid) >= 2:
+        _add_gradient_area(chart, line, ax_x, ax_y, color, min(valid))
+    v = _view(chart, height, adaptive={"type": "numeric"})
+    _set_track(v, line, fmt, "cat", cats=list(categories))
+    return v
+
+
+def _bar_brush(color):
+    """渐变柱 brush：顶部亮 15% → 底部原色（ObjectBoundingMode 让每根柱独立渐变）。"""
+    g = QLinearGradient(0.0, 0.0, 0.0, 1.0)
+    g.setCoordinateMode(QGradient.ObjectBoundingMode)
+    g.setColorAt(0.0, QColor(color).lighter(118))
+    g.setColorAt(1.0, QColor(color))
+    return QBrush(g)
 
 
 def bar_chart(title, categories, values, color="#1e88e5", y_label="", height=220, fmt="%.0f", label_angle=0):
-    """柱状图。label_angle: X 轴标签旋转角度（长标签用 -45 防重叠）。"""
+    """柱状图（渐变柱体）。label_angle: X 轴标签旋转角度（长标签用 -45 防重叠）。"""
     chart = QChart()
     _style(chart, title)
     bs = QBarSet("")
-    bs.setColor(QColor(color))
+    bs.setBrush(_bar_brush(color))
+    bs.setBorderColor(QColor(color))
     for v in values:
         bs.append(float(v or 0))
     series = QBarSeries()
     series.append(bs)
-    series.setBarWidth(0.7)
+    series.setBarWidth(0.62)
     chart.addSeries(series)
     ax_x = QBarCategoryAxis()
     ax_x.append([str(c) for c in categories])
     ax_x.setLabelsFont(_axis_font())
+    ax_x.setLabelsColor(QColor(AXIS_TEXT))
+    ax_x.setGridLineVisible(False)
+    ax_x.setLineVisible(False)
     if label_angle:
         ax_x.setLabelsAngle(label_angle)
     ax_y = _y_axis(y_label, fmt)
@@ -300,18 +536,19 @@ def bar_chart(title, categories, values, color="#1e88e5", y_label="", height=220
 
 
 def bar_chart_clean(title, categories, values, color="#1e88e5", y_label="", height=300, fmt="%.0f"):
-    """干净看板风格柱状图：白色背景、淡色网格线、细柱体、无标题、5 公里间隔标签。"""
+    """干净看板风格柱状图：透明背景、浅虚线网格、渐变细柱、无标题。"""
     chart = QChart()
-    # 白色背景，无标题
-    chart.setBackgroundBrush(QColor("#ffffff"))
+    chart.setBackgroundVisible(False)
     chart.setBackgroundRoundness(0)
     chart.layout().setContentsMargins(0, 0, 0, 0)
     chart.legend().hide()
-    chart.setMargins(QMargins(6, 6, 6, 6))
+    chart.setMargins(QMargins(4, 8, 10, 4))
+    chart.setAnimationOptions(QChart.SeriesAnimations)
+    chart.setAnimationDuration(650)
 
-    # 细柱体，更窄的间距
     bs = QBarSet("")
-    bs.setColor(QColor(color))
+    bs.setBrush(_bar_brush(color))
+    bs.setBorderColor(QColor(color))
     for v in values:
         bs.append(float(v or 0))
     series = QBarSeries()
@@ -322,11 +559,12 @@ def bar_chart_clean(title, categories, values, color="#1e88e5", y_label="", heig
     ax_x = QBarCategoryAxis()
     ax_x.append([str(c) for c in categories])
     ax_x.setLabelsFont(_axis_font())
+    ax_x.setLabelsColor(QColor(AXIS_TEXT))
     ax_x.setGridLineVisible(False)
+    ax_x.setLineVisible(False)
     _no_title(ax_x)
 
     ax_y = _y_axis(y_label, fmt)
-    ax_y.setGridLineColor(QColor("#e8e8e8"))
     ax_y.setTickCount(5)
 
     chart.addAxis(ax_x, Qt.AlignBottom)
@@ -366,16 +604,17 @@ def multi_line_chart_cat(title, categories, series_list, y_label="", height=280,
         color = s.get("color", "#1e88e5")
         line = QLineSeries()
         line.setName(s["name"])
-        line.setPen(QPen(QColor(color), 1.6))
+        line.setPen(_line_pen(color, 2.2))
         for i, v in enumerate(vals):
             if v is not None:
                 line.append(float(i), float(v))
         chart.addSeries(line)
 
-        # 数据点标记
+        # 数据点标记（小号白芯感）
         pts = QScatterSeries()
-        pts.setMarkerSize(4.0)
+        pts.setMarkerSize(7.0)
         pts.setColor(QColor(color))
+        pts.setBorderColor(QColor("#ffffff"))
         for i, v in enumerate(vals):
             if v is not None:
                 pts.append(float(i), float(v))
@@ -384,7 +623,10 @@ def multi_line_chart_cat(title, categories, series_list, y_label="", height=280,
     ax_x = QCategoryAxis()
     ax_x.setLabelsPosition(QCategoryAxis.AxisLabelsPositionOnValue)
     ax_x.setLabelsFont(_axis_font())
+    ax_x.setLabelsColor(QColor(AXIS_TEXT))
     _no_title(ax_x)
+    ax_x.setGridLineVisible(False)
+    ax_x.setLineVisible(False)
     # 自动精简标签数量（每 95px 一个标签）
     n = len(categories)
     if n > 0:
@@ -393,7 +635,15 @@ def multi_line_chart_cat(title, categories, series_list, y_label="", height=280,
     ax_x.setRange(-0.5, float(max(n - 1, 0)) + 0.5)
 
     ax_y = _y_axis(y_label, fmt)
-    ax_y.setGridLineColor(QColor("#e8e8e8"))
+    # 显式计算 Y 轴范围：QtCharts 多 series 下 auto range 只认部分 series，
+    # ATL 冲出图表顶部的 bug 就源于此（显式 setRange 确定性地修掉）。
+    all_vals = [v for s in series_list for v in s["values"] if v is not None]
+    if all_vals:
+        lo, hi = min(all_vals), max(all_vals)
+        if hi - lo < 1e-6:
+            hi = lo + 1.0
+        pad = (hi - lo) * 0.12
+        ax_y.setRange(lo - pad, hi + pad)
     ax_y.setTickCount(5)
 
     chart.addAxis(ax_x, Qt.AlignBottom)
@@ -403,6 +653,11 @@ def multi_line_chart_cat(title, categories, series_list, y_label="", height=280,
             continue
         s.attachAxis(ax_x)
         s.attachAxis(ax_y)
+    # 数据点系列不进图例（与同名折线重复）
+    for s in chart.series():
+        if isinstance(s, QScatterSeries):
+            for m in chart.legend().markers(s):
+                m.setVisible(False)
     return _view(chart, height, adaptive={"type": "cat", "cats": list(categories)})
 
 
@@ -428,7 +683,7 @@ def elevation_chart_with_climbs(title, xs, ys, climbs, color="#1e88e5",
 
     # 1) 海拔折线
     line = QLineSeries()
-    line.setPen(QPen(QColor(color), 1.6))
+    line.setPen(QPen(QColor(color), 2.0, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
     for x, y in zip(xs, ys):
         if y is None:
             continue
@@ -534,9 +789,9 @@ def hr_curve_with_zones(title, xs_sec, ys, hr_max, pcts, height=300, fmt="%.0f")
         band.upperSeriesRef = upper
         band.lowerSeriesRef = lower
 
-    # 2) 再画心率折线
+    # 2) 再画心率折线（粗圆头深色主线）
     line = QLineSeries()
-    line.setPen(QPen(QColor("#111111"), 1.8))
+    line.setPen(_line_pen("#111111"))
     for x, y in zip(xs_sec, ys):
         if y is None:
             continue
@@ -546,6 +801,7 @@ def hr_curve_with_zones(title, xs_sec, ys, hr_max, pcts, height=300, fmt="%.0f")
     ax_x = QCategoryAxis()
     ax_x.setLabelsPosition(QCategoryAxis.AxisLabelsPositionOnValue)
     _no_title(ax_x)
+    _style_axis(ax_x, grid=False)
     ax_x.setLabelsFont(_axis_font())
     import math
     step = max(60, int(math.ceil(x_max / 5)))
@@ -565,7 +821,9 @@ def hr_curve_with_zones(title, xs_sec, ys, hr_max, pcts, height=300, fmt="%.0f")
         s.attachAxis(ax_x)
         s.attachAxis(ax_y)
 
-    return _view(chart, height, adaptive={"type": "time", "xs": list(xs_sec)})
+    v = _view(chart, height, adaptive={"type": "time", "xs": list(xs_sec)})
+    _set_track(v, line, fmt, "time")
+    return v
 
 
 # ---------------- 渐变折线（按 Y 值分段着色） ----------------
@@ -602,6 +860,40 @@ ALTITUDE_STOPS = [(0.0, "#2e7d32"), (0.5, "#fdd835"), (1.0, "#e53935")]
 SPEED_STOPS = [(0.0, "#1565c0"), (0.5, "#00acc1"), (1.0, "#ef6c00")]
 
 
+def _add_gradient_area_segment(chart, ax_x, ax_y, x0, y0, x1, y1, base, color):
+    """渐变折线的分段面积填充：颜色取该段渐变色（同海拔面积图的做法）。"""
+    upper = QLineSeries()
+    upper.setPen(QPen(Qt.NoPen))
+    upper.append(x0, y0)
+    upper.append(x1, y1)
+    lower = QLineSeries()
+    lower.setPen(QPen(Qt.NoPen))
+    lower.append(x0, base)
+    lower.append(x1, base)
+    area = QAreaSeries(upper, lower)
+    c = QColor(color)
+    c.setAlpha(AREA_ALPHA_TOP + 24)
+    area.setBrush(QBrush(c))
+    area.setPen(QPen(Qt.NoPen))
+    chart.addSeries(area)
+    area.attachAxis(ax_x)
+    area.attachAxis(ax_y)
+    area.upperSeriesRef = upper
+    area.lowerSeriesRef = lower
+
+
+def _track_series_proxy(chart, ax_x, ax_y, pts):
+    """为 hover 建一个不可见的全量点序列（渐变分段线没有单一 series 可映射）。"""
+    proxy = QLineSeries()
+    proxy.setPen(QPen(Qt.NoPen))  # 完全不渲染，只用于坐标映射
+    for x, y in pts:
+        proxy.append(x, y)
+    chart.addSeries(proxy)
+    proxy.attachAxis(ax_x)
+    proxy.attachAxis(ax_y)
+    return proxy
+
+
 def gradient_line_numeric(title, xs, ys, stops, y_label="", height=300, fmt="%.0f"):
     """数值 X 轴渐变折线：按 Y 值归一化后分段着色。
 
@@ -626,14 +918,19 @@ def gradient_line_numeric(title, xs, ys, stops, y_label="", height=300, fmt="%.0
         x1, y1 = pts[i + 1]
         vmid = (y0 + y1) / 2.0
         v01 = (vmid - vmin) / (vmax - vmin)
+        col = _gradient_color(stops_color, v01)
         seg = QLineSeries()
-        seg.setPen(QPen(_gradient_color(stops_color, v01), 1.8))
+        seg.setPen(QPen(col, 2.4, Qt.SolidLine, Qt.RoundCap))
         seg.append(x0, y0)
         seg.append(x1, y1)
         chart.addSeries(seg)
         seg.attachAxis(ax_x)
         seg.attachAxis(ax_y)
-    return _view(chart, height, adaptive={"type": "numeric"})
+        _add_gradient_area_segment(chart, ax_x, ax_y, x0, y0, x1, y1, vmin, col)
+    proxy = _track_series_proxy(chart, ax_x, ax_y, pts)
+    v = _view(chart, height, adaptive={"type": "numeric"})
+    _set_track(v, proxy, fmt, "num")
+    return v
 
 
 def gradient_line_time(title, xs_sec, ys, stops, y_label="", height=300, fmt="%.0f"):
@@ -652,6 +949,7 @@ def gradient_line_time(title, xs_sec, ys, stops, y_label="", height=300, fmt="%.
     ax_x = QCategoryAxis()
     ax_x.setLabelsPosition(QCategoryAxis.AxisLabelsPositionOnValue)
     _no_title(ax_x)
+    _style_axis(ax_x, grid=False)
     ax_x.setLabelsFont(_axis_font())
     import math
     step = max(60, int(math.ceil(x_max / 5)))
@@ -672,14 +970,19 @@ def gradient_line_time(title, xs_sec, ys, stops, y_label="", height=300, fmt="%.
         x1, y1 = pts[i + 1]
         vmid = (y0 + y1) / 2.0
         v01 = (vmid - vmin) / (vmax - vmin)
+        col = _gradient_color(stops_color, v01)
         seg = QLineSeries()
-        seg.setPen(QPen(_gradient_color(stops_color, v01), 1.8))
+        seg.setPen(QPen(col, 2.4, Qt.SolidLine, Qt.RoundCap))
         seg.append(x0, y0)
         seg.append(x1, y1)
         chart.addSeries(seg)
         seg.attachAxis(ax_x)
         seg.attachAxis(ax_y)
-    return _view(chart, height, adaptive={"type": "time", "xs": list(xs_sec)})
+        _add_gradient_area_segment(chart, ax_x, ax_y, x0, y0, x1, y1, vmin, col)
+    proxy = _track_series_proxy(chart, ax_x, ax_y, pts)
+    v = _view(chart, height, adaptive={"type": "time", "xs": list(xs_sec)})
+    _set_track(v, proxy, fmt, "time")
+    return v
 
 
 def altitude_area_chart(title, xs, ys, height=320, fmt="%.0f"):
@@ -738,7 +1041,7 @@ def altitude_area_chart(title, xs, ys, height=320, fmt="%.0f"):
 
     # 顶部再画一条实线（清晰地勾出轮廓）
     line = QLineSeries()
-    line.setPen(QPen(QColor("#37474f"), 2.0))
+    line.setPen(QPen(QColor("#37474f"), 2.0, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
     for x, y in pts:
         line.append(x, y)
     chart.addSeries(line)
