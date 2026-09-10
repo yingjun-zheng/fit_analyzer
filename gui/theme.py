@@ -29,10 +29,19 @@ def apply_light_palette(app):
 QSS = """
 QWidget { font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI"; font-size: 13px; color: #26313b; }
 QMainWindow, QDialog { background: #f4f6f8; }
-QToolBar { background: #ffffff; border-bottom: 1px solid #dde3e8; spacing: 8px; padding: 6px 8px; }
-QToolBar QToolButton { background: #ffffff; border: 1px solid #c9d2da; border-radius: 5px; padding: 5px 14px; }
-QToolBar QToolButton:hover { border-color: #1e88e5; color: #1e88e5; }
-QToolBar QToolButton:pressed { background: #eef4fb; }
+QToolBar { background: #ffffff; border-bottom: 1px solid #dde3e8; spacing: 4px; padding: 6px 10px; }
+QToolBar::separator { width: 1px; background: #e0e5ea; margin: 5px 8px; }
+QToolBar QToolButton { background: transparent; border: none; border-radius: 6px; padding: 6px 14px; }
+QToolBar QToolButton:hover { background: #eef4fb; color: #1565c0; }
+QToolBar QToolButton:pressed { background: #dcebfa; }
+QMenuBar { background: #ffffff; border-bottom: 1px solid #dde3e8; }
+QMenuBar::item { padding: 6px 12px; background: transparent; border-radius: 4px; }
+QMenuBar::item:selected { background: #eef4fb; color: #1565c0; }
+QMenu { background: #ffffff; border: 1px solid #dde3e8; border-radius: 6px; padding: 4px; }
+QMenu::item { padding: 7px 28px 7px 14px; border-radius: 4px; }
+QMenu::item:selected { background: #eef4fb; color: #1565c0; }
+QMenu::item:disabled { color: #b0b8c0; }
+QMenu::separator { height: 1px; background: #e8edf2; margin: 4px 8px; }
 QPushButton { background: #ffffff; border: 1px solid #c9d2da; border-radius: 5px; padding: 5px 14px; }
 QPushButton:hover { border-color: #1e88e5; color: #1e88e5; }
 QPushButton:pressed { background: #eef4fb; }

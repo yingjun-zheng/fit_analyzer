@@ -185,7 +185,8 @@ The "Track" page supports two modes, auto-switched:
 - Data directory: `%APPDATA%\FitAnalyzer\`
   - `fit.db` SQLite database (activities / laps / per-record points / gear ledger)
   - `logs\fit_analyzer.log` rolling log (2 MB × 5 files)
-- Toolbar "Logs" for live view (auto-refresh); "Data directory" opens the data folder.
+- Menu bar (**File / Tools / Help**) hosts every entry with shortcuts (import Ctrl+O, export GPX Ctrl+E, delete Del, refresh F5); settings live under Help → Settings, plus an About dialog.
+- Log viewer is at **Settings → Diagnostics & logs → View logs** (auto-refresh, for troubleshooting/development); data directory is under Help → Open data directory.
 - CLI args: `--data-dir` (custom data dir), `--debug` (verbose logging), `--selftest` (offscreen self-test).
 
 ## 7. Repackaging the EXE

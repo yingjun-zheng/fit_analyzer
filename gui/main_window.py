@@ -42,7 +42,7 @@ from core import ai_analysis, ai_client, analysis, fit_parser, logging_setup, mo
 from core.config import Config
 from core.db import DB
 from gui import charts as ch
-from gui.dialogs import LogsDialog, SettingsDialog
+from gui.dialogs import SettingsDialog
 from gui.heatmap import RideHeatmapWidget
 from gui.theme import fmt_dt, fmt_duration, fmt_km, kmh
 from gui.track_widget import TrackWidget
@@ -165,49 +165,8 @@ class MainWindow(QMainWindow):
 
     # ---------------- UI 构建 ----------------
     def _build_ui(self):
-        tb = QToolBar()
-        tb.setMovable(False)
-        tb.setToolButtonStyle(Qt.ToolButtonTextOnly)
-
-        act_import = QAction("📁 批量导入 FIT 文件", self)
-        act_import.triggered.connect(self.import_files)
-        act_refresh = QAction("刷新", self)
-        act_refresh.triggered.connect(self.load_months)
-        act_settings = QAction("设置", self)
-        act_settings.triggered.connect(self.open_settings)
-        act_logs = QAction("日志", self)
-        act_logs.triggered.connect(self.open_logs)
-        act_dir = QAction("数据目录", self)
-        act_dir.triggered.connect(self.open_data_dir)
-        act_export = QAction("📤 导出 GPX", self)
-        act_export.triggered.connect(self.export_gpx)
-        act_plan = QAction("🧭 路径规划", self)
-        act_plan.triggered.connect(self.open_plan)
-        act_auto_plan = QAction("✨ 自动规划路书", self)
-        act_auto_plan.triggered.connect(self.open_auto_plan)
-        act_to_route = QAction("🔁 转路书", self)
-        act_to_route.triggered.connect(self.export_route)
-        # 装备管家（里程驱动的保养提醒）
-        act_gear = QAction("🔧 装备管家", self)
-        act_gear.triggered.connect(self.open_gear)
-        # 删除选中（批量）
-        act_delete = QAction("🗑 删除选中", self)
-        act_delete.triggered.connect(self.delete_selected)
-
-        tb.addAction(act_import)
-        tb.addAction(act_refresh)
-        tb.addAction(act_delete)
-        tb.addSeparator()
-        tb.addAction(act_export)
-        tb.addAction(act_plan)
-        tb.addAction(act_auto_plan)
-        tb.addAction(act_to_route)
-        tb.addAction(act_gear)
-        tb.addSeparator()
-        tb.addAction(act_settings)
-        tb.addAction(act_logs)
-        tb.addAction(act_dir)
-        self.addToolBar(tb)
+        self._build_menus()
+        self._build_toolbar()
 
         self.month_tree = QTreeWidget()
         self.month_tree.setHeaderLabels(["训练记录"])
@@ -244,6 +203,85 @@ class MainWindow(QMainWindow):
         splitter.setSizes([340, 940])
         self.setCentralWidget(splitter)
         self.statusBar().showMessage("就绪", 3000)
+
+    def _add_action(self, menu, text, slot, shortcut=None, tip=None):
+        """菜单项便捷构建：文本 + 槽 + 可选快捷键与状态栏提示。"""
+        act = QAction(text, self)
+        if shortcut:
+            act.setShortcut(shortcut)
+        if tip:
+            act.setStatusTip(tip)
+            act.setToolTip(tip)
+        act.triggered.connect(slot)
+        menu.addAction(act)
+        return act
+
+    def _build_menus(self):
+        """菜单栏：常规桌面软件布局——高频功能进工具栏，设置/诊断收进菜单。"""
+        mb = self.menuBar()
+
+        m_file = mb.addMenu("文件(&F)")
+        self._add_action(m_file, "📁 批量导入 FIT 文件…", self.import_files, "Ctrl+O",
+                         "批量导入码表导出的 FIT 文件（也可直接拖拽 .fit 进窗口）")
+        self._add_action(m_file, "📤 导出 GPX", self.export_gpx, "Ctrl+E",
+                         "把当前选中的活动导出为 GPX 1.1 文件")
+        m_file.addSeparator()
+        self._add_action(m_file, "🗑 删除选中", self.delete_selected, "Del",
+                         "删除左侧选中的活动记录（可多选）")
+        m_file.addSeparator()
+        self._add_action(m_file, "退出", self.close, "Ctrl+Q")
+
+        m_tools = mb.addMenu("工具(&T)")
+        self._add_action(m_tools, "🧭 路径规划", self.open_plan, tip="高德地图点击选点，逐段规划骑行路线")
+        self._add_action(m_tools, "✨ 自动规划路书", self.open_auto_plan, tip="一句话自动生成长途路书（分段接力 + 休息点）")
+        self._add_action(m_tools, "🔁 转路书", self.export_route, tip="把当前选中的活动转成路书分析（爬坡分级/AI/导出）")
+        self._add_action(m_tools, "🔧 装备管家", self.open_gear, tip="消耗件台账与里程驱动的保养提醒")
+        m_tools.addSeparator()
+        self._add_action(m_tools, "🔄 刷新", self.load_months, "F5", "重新加载训练记录")
+
+        m_help = mb.addMenu("帮助(&H)")
+        self._add_action(m_help, "⚙️ 设置…", self.open_settings, tip="统计区间 / AI / 高德 Key / 年度目标 / 诊断日志")
+        self._add_action(m_help, "📂 打开数据目录", self.open_data_dir, tip="打开 fit.db 与日志所在文件夹")
+        m_help.addSeparator()
+        self._add_action(m_help, "关于…", self.show_about)
+
+    def _build_toolbar(self):
+        """工具栏：只保留高频操作，扁平分组样式（低频入口收进菜单栏）。"""
+        tb = QToolBar()
+        tb.setMovable(False)
+        tb.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        tb.setObjectName("mainToolBar")
+        for item in [
+                ("📁 批量导入", self.import_files, "批量导入 FIT 文件（也可直接拖拽 .fit 进窗口）"),
+                ("📤 导出 GPX", self.export_gpx, "把当前选中的活动导出为 GPX"),
+                None,
+                ("🧭 路径规划", self.open_plan, "高德地图点击选点，逐段规划骑行路线"),
+                ("✨ 自动规划", self.open_auto_plan, "一句话自动生成长途路书（分段接力 + 休息点）"),
+                ("🔁 转路书", self.export_route, "把当前活动转成路书分析（爬坡分级/AI/导出）"),
+                None,
+                ("🔧 装备管家", self.open_gear, "消耗件台账与里程驱动的保养提醒"),
+        ]:
+            if item is None:
+                tb.addSeparator()
+                continue
+            text, slot, tip = item
+            act = QAction(text, self)
+            act.setToolTip(tip)
+            act.setStatusTip(tip)
+            act.triggered.connect(slot)
+            tb.addAction(act)
+        self.addToolBar(tb)
+
+    def show_about(self):
+        """关于对话框。"""
+        QMessageBox.about(
+            self, f"关于 {self.config.get('app_name')}",
+            f"<h3>{self.config.get('app_name')} v{self.config.get('version')}</h3>"
+            "<p>免费、本地运行的骑行 FIT 数据离线分析软件（PySide6 原生界面，"
+            "SQLite 本地存储，无浏览器、无本地服务）。</p>"
+            "<p style='color:#7a8794'>数据目录：" + str(self.data_dir) + "</p>"
+            "<p style='color:#7a8794'>数据仅存本机；联网功能（AI/高德/海拔补全）"
+            "均需自行配置且只在你主动使用时调用。</p>")
 
     # ---------------- 左侧月度 AI 对话面板 ----------------
     def _build_ai_panel(self):
@@ -1528,10 +1566,6 @@ class MainWindow(QMainWindow):
             self.show_activity(self.cur_activity["id"], force=True)
         elif self._cur_month is not None:
             self.show_month(self._cur_month, force=True)
-
-    def open_logs(self):
-        dlg = LogsDialog(self)
-        dlg.exec()
 
     def open_data_dir(self):
         try:

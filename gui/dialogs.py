@@ -140,6 +140,20 @@ class SettingsDialog(QDialog):
         plan_tip.setWordWrap(True)
         form.addRow(plan_tip)
 
+        # 诊断与日志（面向排障/开发，一般用户无需使用）
+        diag_title = QLabel("诊断与日志")
+        diag_title.setObjectName("h3")
+        form.addRow(diag_title)
+        diag_row = QHBoxLayout()
+        btn_logs = QPushButton("📜 查看日志")
+        btn_logs.clicked.connect(self._open_logs)
+        diag_row.addWidget(btn_logs)
+        diag_note = QLabel("运行日志与 AI 工具调用记录（滚动文件 + 实时查看），排障用。")
+        diag_note.setObjectName("muted")
+        diag_note.setWordWrap(True)
+        diag_row.addWidget(diag_note, 1)
+        form.addRow("", diag_row)
+
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.button(QDialogButtonBox.Ok).setText("保存")
         buttons.button(QDialogButtonBox.Cancel).setText("取消")
@@ -193,6 +207,10 @@ class SettingsDialog(QDialog):
             )
         except Exception as e:
             self.lblFtpEst.setText(f"估算失败：{e}")
+
+    def _open_logs(self):
+        """打开日志查看器（诊断二级入口，嵌在设置内）。"""
+        LogsDialog(self).exec()
 
     def _do_reidentify(self):
         """先保存当前设置（含型号表），再触发主窗口重新识别所有设备。"""
