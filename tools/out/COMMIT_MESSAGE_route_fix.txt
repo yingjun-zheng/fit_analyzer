@@ -1,0 +1,12 @@
+fix(route): 修复路径规划点不显示——误用高德 JS 1.4 的全局事件对象
+
+- 根因：bindMarkerEvents 用了 AMap.event.addListener 绑拖拽/右键事件，
+  该 API 属高德 JS 1.4；项目用的是 2.0（AMap.event 已移除），
+  运行时 TypeError 导致 rebuildMarkers 中断，途经点标记全部渲染失败
+- 修复：改用 2.0 的实例 .on() 绑定 dragend/rightclick；
+  dragend 坐标改取 marker.getPosition()（不依赖事件参数结构）
+- 防回归：test_plan_map_js.js 新增断言「业务 JS 不得引用 AMap.event」；
+  stub 的 Marker 补 .on() 并移除 1.4 语义的 AMap.event（此前 stub 与真实
+  API 不一致，正是漏过此 bug 的原因）
+
+验证：node 测试 15/15 通过

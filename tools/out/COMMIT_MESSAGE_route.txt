@@ -1,0 +1,15 @@
+feat(route): 路径规划支持逐点编辑与用户自定义起/终点
+
+- route_plan_map.py JS: 途经点标记可拖拽移位（dragend 更新坐标）、右键删除任意点，
+  新增 moveWaypointToStart/End（把选中点重排到首/尾 = 自定义起/终点）；
+  删除 rebuildMarkers 全量重建标记并刷新序号，任何点操作后自动清除已规划路线
+- route_plan_map.py JS: 起终点视觉区分——首点绿「起」(#2e7d32)、末点红「终」(#c62828)、
+  中间蓝色序号，重排后角色自动跟随刷新
+- route_plan_map.py Python: RoutePlanMapWidget 新增 remove_point/move_point_to_start/
+  move_point_to_end；途经点唯一真源收敛到 JS 侧，移除 Python 侧不同步的 _waypoints 副本
+- route_plan_map.py PlanDialog: 途经点列表新增「删除选中 / 设为起点 / 设为终点」按钮
+  （选中列表项后操作），提示文案同步更新
+- tools: 新增 test_plan_map_js.js（node 14 项断言：增删/拖拽更新/起终点重排/边界/
+  标记角色与事件绑定），离屏跑 JS 逻辑回归，不依赖联网与 GUI
+
+验证：node JS 测试 14/14、test_route_plan 17/17、test_route 23/23、gui_route_selftest 全过、py_compile 通过

@@ -61,24 +61,68 @@ function initMap() {
         });
         var info = document.getElementById('waypointInfo');
         info.style.display = 'block';
-        info.textContent = '点击地图添加途经点，当前 ' + waypoints.length + ' 个点';
+        infoText();
     }).catch(function(err) {
         document.body.setAttribute('data-status', 'error');
         document.body.innerHTML = '<div style="color:#ff9a9a;padding:14px">地图加载失败：' + (err.message || err) + '</div>';
     });
 }
 
-function addWaypoint(lng, lat) {
-    var idx = waypoints.length + 1;
-    waypoints.push({lng: lng, lat: lat});
-    var content = '<div style="width:22px;height:22px;line-height:22px;text-align:center;'
-        + 'border-radius:50%;background:#1e88e5;color:#fff;font-size:12px;font-weight:bold;'
-        + 'border:2px solid #fff;box-shadow:0 0 0 2px rgba(30,136,229,.4)">' + idx + '</div>';
-    var marker = new AMap.Marker({ position: [lng, lat], content: content, offset: [0, -11] });
-    map.add(marker);
-    markers.push(marker);
+function infoText() {
     var info = document.getElementById('waypointInfo');
-    if (info) info.textContent = '点击地图添加途经点，当前 ' + waypoints.length + ' 个点';
+    if (info) info.textContent = '点击地图加点 · 拖拽标记移位 · 右键标记删除 · 当前 ' + waypoints.length + ' 个点（首点=起点，末点=终点）';
+}
+
+function markerContent(i) {
+    // 角色视觉：首点=绿「起」，末点=红「终」，中间=蓝色序号（单点按起点显示）
+    var first = (i === 0), last = (i === waypoints.length - 1 && waypoints.length > 1);
+    if (first) {
+        return '<div style="width:24px;height:24px;line-height:24px;text-align:center;border-radius:50%;'
+            + 'background:#2e7d32;color:#fff;font-size:11px;font-weight:bold;border:2px solid #fff;'
+            + 'box-shadow:0 0 0 2px rgba(46,125,50,.4)">起</div>';
+    }
+    if (last) {
+        return '<div style="width:24px;height:24px;line-height:24px;text-align:center;border-radius:50%;'
+            + 'background:#c62828;color:#fff;font-size:11px;font-weight:bold;border:2px solid #fff;'
+            + 'box-shadow:0 0 0 2px rgba(198,40,40,.4)">终</div>';
+    }
+    return '<div style="width:22px;height:22px;line-height:22px;text-align:center;border-radius:50%;'
+        + 'background:#1e88e5;color:#fff;font-size:12px;font-weight:bold;border:2px solid #fff;'
+        + 'box-shadow:0 0 0 2px rgba(30,136,229,.4)">' + (i + 1) + '</div>';
+}
+
+function bindMarkerEvents(marker, i) {
+    // 高德 JS 2.0 已移除 1.4 的全局事件对象，事件统一用实例 .on() 绑定
+    marker.on('dragend', function() {
+        var p = marker.getPosition();  // 拖拽结束取标记自身位置，不依赖事件参数结构
+        updateWaypointPos(i, p.getLng(), p.getLat());
+    });
+    marker.on('rightclick', function() {
+        removeWaypointAt(i);
+    });
+}
+
+// 全量重建标记（角色/序号可能因增删重排而变化；点数少，重建开销可忽略）
+function rebuildMarkers() {
+    markers.forEach(function(m) { map.remove(m); });
+    markers = [];
+    waypoints.forEach(function(w, i) {
+        var marker = new AMap.Marker({
+            position: [w.lng, w.lat],
+            content: markerContent(i),
+            offset: [0, -12],
+            draggable: true
+        });
+        bindMarkerEvents(marker, i);
+        map.add(marker);
+        markers.push(marker);
+    });
+    infoText();
+}
+
+function addWaypoint(lng, lat) {
+    waypoints.push({lng: lng, lat: lat});
+    rebuildMarkers();
 }
 
 function getWaypointsJSON() {
@@ -90,18 +134,43 @@ function clearWaypoints() {
     markers.forEach(function(m) { map.remove(m); });
     markers = [];
     if (routeLine) { map.remove(routeLine); routeLine = null; }
-    var info = document.getElementById('waypointInfo');
-    if (info) info.textContent = '点击地图添加途经点，当前 0 个点';
+    infoText();
 }
 
 function removeLastWaypoint() {
     if (waypoints.length === 0) return;
     waypoints.pop();
-    var m = markers.pop();
-    map.remove(m);
     if (routeLine) { map.remove(routeLine); routeLine = null; }
-    var info = document.getElementById('waypointInfo');
-    if (info) info.textContent = '点击地图添加途经点，当前 ' + waypoints.length + ' 个点';
+    rebuildMarkers();
+}
+
+function removeWaypointAt(i) {
+    if (i < 0 || i >= waypoints.length) return;
+    waypoints.splice(i, 1);
+    if (routeLine) { map.remove(routeLine); routeLine = null; }
+    rebuildMarkers();
+}
+
+function moveWaypointToStart(i) {
+    if (i <= 0 || i >= waypoints.length) return;
+    var p = waypoints.splice(i, 1)[0];
+    waypoints.unshift(p);
+    if (routeLine) { map.remove(routeLine); routeLine = null; }
+    rebuildMarkers();
+}
+
+function moveWaypointToEnd(i) {
+    if (i < 0 || i >= waypoints.length - 1) return;
+    var p = waypoints.splice(i, 1)[0];
+    waypoints.push(p);
+    if (routeLine) { map.remove(routeLine); routeLine = null; }
+    rebuildMarkers();
+}
+
+function updateWaypointPos(i, lng, lat) {
+    if (i < 0 || i >= waypoints.length) return;
+    waypoints[i] = {lng: lng, lat: lat};
+    if (routeLine) { map.remove(routeLine); routeLine = null; }
 }
 
 function renderRoute(polylineCoords) {
@@ -154,7 +223,7 @@ class RoutePlanMapWidget(QWidget):
         self._key = (config.get("amap_key") or "").strip()
         self._sec = (config.get("amap_security") or "").strip()
         self._init_center = init_center  # WGS-84 [lng, lat] 或 None
-        self._waypoints = []  # [(lng, lat), ...]
+        # 途经点唯一真源在 JS 侧（waypoints 数组），Python 只通过 runJavaScript 读写
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -179,13 +248,22 @@ class RoutePlanMapWidget(QWidget):
         self._web.page().runJavaScript("getWaypointsJSON();", callback)
 
     def clear_waypoints(self):
-        self._waypoints.clear()
         self._web.page().runJavaScript("clearWaypoints();")
 
     def remove_last(self):
-        if self._waypoints:
-            self._waypoints.pop()
         self._web.page().runJavaScript("removeLastWaypoint();")
+
+    def remove_point(self, index):
+        """删除第 index 个途经点（JS 侧重排序号并重建标记）。"""
+        self._web.page().runJavaScript(f"removeWaypointAt({int(index)});")
+
+    def move_point_to_start(self, index):
+        """把第 index 个点移到首位（设为起点）。"""
+        self._web.page().runJavaScript(f"moveWaypointToStart({int(index)});")
+
+    def move_point_to_end(self, index):
+        """把第 index 个点移到末位（设为终点）。"""
+        self._web.page().runJavaScript(f"moveWaypointToEnd({int(index)});")
 
     def render_route(self, coords):
         js = f"renderRoute({json.dumps(coords, ensure_ascii=False)});"
@@ -219,10 +297,11 @@ class PlanDialog(QDialog):
         # 右侧：途经点列表 + 操作
         right = QVBoxLayout()
 
-        lbl = QLabel("<b>途经点列表</b>（点击地图添加）")
+        lbl = QLabel("<b>途经点列表</b>（地图点击添加 · 拖拽标记移位 · 右键标记删除）")
         right.addWidget(lbl)
 
         self.pt_list = QListWidget()
+        self.pt_list.setToolTip("选中一个点后可删除，或设为起点/终点")
         right.addWidget(self.pt_list, 1)
 
         btn_row = QHBoxLayout()
@@ -233,6 +312,18 @@ class PlanDialog(QDialog):
         btn_row.addWidget(self.btn_undo)
         btn_row.addWidget(self.btn_clear)
         right.addLayout(btn_row)
+
+        edit_row = QHBoxLayout()
+        self.btn_del_sel = QPushButton("删除选中")
+        self.btn_del_sel.clicked.connect(self._delete_selected)
+        self.btn_to_start = QPushButton("设为起点")
+        self.btn_to_start.clicked.connect(self._to_start)
+        self.btn_to_end = QPushButton("设为终点")
+        self.btn_to_end.clicked.connect(self._to_end)
+        edit_row.addWidget(self.btn_del_sel)
+        edit_row.addWidget(self.btn_to_start)
+        edit_row.addWidget(self.btn_to_end)
+        right.addLayout(edit_row)
 
         self.chk_enrich = QCheckBox("联网补全海拔（用于爬坡分析）")
         self.chk_enrich.setChecked(True)
@@ -288,6 +379,29 @@ class PlanDialog(QDialog):
 
     def _undo(self):
         self.map_widget.remove_last()
+
+    def _selected_index(self):
+        """当前列表选中点的序号；未选中返回 None 并提示。"""
+        row = self.pt_list.currentRow()
+        if row < 0:
+            QMessageBox.information(self, "提示", "请先在途经点列表中选中一个点")
+            return None
+        return row
+
+    def _delete_selected(self):
+        idx = self._selected_index()
+        if idx is not None:
+            self.map_widget.remove_point(idx)
+
+    def _to_start(self):
+        idx = self._selected_index()
+        if idx is not None:
+            self.map_widget.move_point_to_start(idx)
+
+    def _to_end(self):
+        idx = self._selected_index()
+        if idx is not None:
+            self.map_widget.move_point_to_end(idx)
 
     def _clear(self):
         self.map_widget.clear_waypoints()

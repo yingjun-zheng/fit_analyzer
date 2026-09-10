@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<script>window._AMapSecurityConfig = { securityJsCode: 'testsec' };</script>
+<script>
+function outOfChina(lng, lat){return !(lng>73.66&&lng<135.05&&lat>3.86&&lat<53.55);}
+function tLat(lng,lat){var r=-100+2*lng+3*lat+0.2*lat*lat+0.1*lng*lat+0.2*Math.sqrt(Math.abs(lng));r+=(20*Math.sin(6*lng*Math.PI)+20*Math.sin(2*lng*Math.PI))*2/3;r+=(20*Math.sin(lat*Math.PI)+40*Math.sin(lat/3*Math.PI))*2/3;r+=(160*Math.sin(lat/12*Math.PI)+320*Math.sin(lat*Math.PI/30))*2/3;return r;}
+function tLng(lng,lat){var r=300+lng+2*lat+0.1*lng*lng+0.1*lng*lat+0.1*Math.sqrt(Math.abs(lng));r+=(20*Math.sin(6*lng*Math.PI)+20*Math.sin(2*lng*Math.PI))*2/3;r+=(20*Math.sin(lng*Math.PI)+40*Math.sin(lng/3*Math.PI))*2/3;r+=(150*Math.sin(lng/12*Math.PI)+300*Math.sin(lng/30*Math.PI))*2/3;return r;}
+function wgs84ToGcj02(lng,lat){if(outOfChina(lng,lat))return [lng,lat];var dLat=tLat(lng-105,lat-35);var dLng=tLng(lng-105,lat-35);var radLat=lat/180*Math.PI;var magic=Math.sin(radLat);magic=1-0.00669342162296594323*magic*magic;var sq=Math.sqrt(magic);dLat=(dLat*180)/((6378245.0*(1-0.00669342162296594323))/(magic*sq)*Math.PI);dLng=(dLng*180)/(6378245.0/sq*Math.cos(radLat)*Math.PI);return [lng+dLng,lat+dLat];}
+</script>
+<script src="https://webapi.amap.com/loader.js"></script>
+<style>
+html,body{margin:0;height:100%;background:#0f1115}
+#map{height:100%}
+.waypoint-info{position:fixed;bottom:8px;left:8px;background:rgba(0,0,0,0.7);color:#fff;padding:4px 10px;border-radius:4px;font-size:12px;display:none}
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div class="waypoint-info" id="waypointInfo"></div>
+<script>
+var map, waypoints = [], markers = [], routeLine = null;
+var INIT_CENTER = null;  // 最近骑行起点（WGS-84 [lng,lat]）；null 时用默认北京视野
+
+function initMap() {
+    document.body.setAttribute('data-status', 'loading');
+    AMapLoader.load({ key: 'testkey', version: '2.0' }).then(function() {
+        document.body.setAttribute('data-status', 'loaded');
+        var c = INIT_CENTER ? wgs84ToGcj02(INIT_CENTER[0], INIT_CENTER[1]) : [116.397, 39.909];
+        map = new AMap.Map('map', { viewMode: '2D', zoom: 13, center: c });
+        map.on('click', function(e) {
+            var lng = e.lnglat.getLng();
+            var lat = e.lnglat.getLat();
+            addWaypoint(lng, lat);
+        });
+        var info = document.getElementById('waypointInfo');
+        info.style.display = 'block';
+        infoText();
+    }).catch(function(err) {
+        document.body.setAttribute('data-status', 'error');
+        document.body.innerHTML = '<div style="color:#ff9a9a;padding:14px">地图加载失败：' + (err.message || err) + '</div>';
+    });
+}
+
+function infoText() {
+    var info = document.getElementById('waypointInfo');
+    if (info) info.textContent = '点击地图加点 · 拖拽标记移位 · 右键标记删除 · 当前 ' + waypoints.length + ' 个点（首点=起点，末点=终点）';
+}
+
+function markerContent(i) {
+    // 角色视觉：首点=绿「起」，末点=红「终」，中间=蓝色序号（单点按起点显示）
+    var first = (i === 0), last = (i === waypoints.length - 1 && waypoints.length > 1);
+    if (first) {
+        return '<div style="width:24px;height:24px;line-height:24px;text-align:center;border-radius:50%;'
+            + 'background:#2e7d32;color:#fff;font-size:11px;font-weight:bold;border:2px solid #fff;'
+            + 'box-shadow:0 0 0 2px rgba(46,125,50,.4)">起</div>';
+    }
+    if (last) {
+        return '<div style="width:24px;height:24px;line-height:24px;text-align:center;border-radius:50%;'
+            + 'background:#c62828;color:#fff;font-size:11px;font-weight:bold;border:2px solid #fff;'
+            + 'box-shadow:0 0 0 2px rgba(198,40,40,.4)">终</div>';
+    }
+    return '<div style="width:22px;height:22px;line-height:22px;text-align:center;border-radius:50%;'
+        + 'background:#1e88e5;color:#fff;font-size:12px;font-weight:bold;border:2px solid #fff;'
+        + 'box-shadow:0 0 0 2px rgba(30,136,229,.4)">' + (i + 1) + '</div>';
+}
+
+function bindMarkerEvents(marker, i) {
+    // 高德 JS 2.0 已移除 1.4 的全局事件对象，事件统一用实例 .on() 绑定
+    marker.on('dragend', function() {
+        var p = marker.getPosition();  // 拖拽结束取标记自身位置，不依赖事件参数结构
+        updateWaypointPos(i, p.getLng(), p.getLat());
+    });
+    marker.on('rightclick', function() {
+        removeWaypointAt(i);
+    });
+}
+
+// 全量重建标记（角色/序号可能因增删重排而变化；点数少，重建开销可忽略）
+function rebuildMarkers() {
+    markers.forEach(function(m) { map.remove(m); });
+    markers = [];
+    waypoints.forEach(function(w, i) {
+        var marker = new AMap.Marker({
+            position: [w.lng, w.lat],
+            content: markerContent(i),
+            offset: [0, -12],
+            draggable: true
+        });
+        bindMarkerEvents(marker, i);
+        map.add(marker);
+        markers.push(marker);
+    });
+    infoText();
+}
+
+function addWaypoint(lng, lat) {
+    waypoints.push({lng: lng, lat: lat});
+    rebuildMarkers();
+}
+
+function getWaypointsJSON() {
+    return JSON.stringify(waypoints.map(function(w){ return [w.lng, w.lat]; }));
+}
+
+function clearWaypoints() {
+    waypoints = [];
+    markers.forEach(function(m) { map.remove(m); });
+    markers = [];
+    if (routeLine) { map.remove(routeLine); routeLine = null; }
+    infoText();
+}
+
+function removeLastWaypoint() {
+    if (waypoints.length === 0) return;
+    waypoints.pop();
+    if (routeLine) { map.remove(routeLine); routeLine = null; }
+    rebuildMarkers();
+}
+
+function removeWaypointAt(i) {
+    if (i < 0 || i >= waypoints.length) return;
+    waypoints.splice(i, 1);
+    if (routeLine) { map.remove(routeLine); routeLine = null; }
+    rebuildMarkers();
+}
+
+function moveWaypointToStart(i) {
+    if (i <= 0 || i >= waypoints.length) return;
+    var p = waypoints.splice(i, 1)[0];
+    waypoints.unshift(p);
+    if (routeLine) { map.remove(routeLine); routeLine = null; }
+    rebuildMarkers();
+}
+
+function moveWaypointToEnd(i) {
+    if (i < 0 || i >= waypoints.length - 1) return;
+    var p = waypoints.splice(i, 1)[0];
+    waypoints.push(p);
+    if (routeLine) { map.remove(routeLine); routeLine = null; }
+    rebuildMarkers();
+}
+
+function updateWaypointPos(i, lng, lat) {
+    if (i < 0 || i >= waypoints.length) return;
+    waypoints[i] = {lng: lng, lat: lat};
+    if (routeLine) { map.remove(routeLine); routeLine = null; }
+}
+
+function renderRoute(polylineCoords) {
+    if (routeLine) { map.remove(routeLine); }
+    routeLine = new AMap.Polyline({
+        path: polylineCoords,
+        strokeColor: '#1e88e5', strokeWeight: 5, strokeOpacity: 0.95,
+        showDir: true, lineJoin: 'round', lineCap: 'round'
+    });
+    map.add(routeLine);
+    if (polylineCoords.length > 0) {
+        map.setFitView([routeLine], false, [40,40,40,40]);
+    }
+}
+
+// 页面加载完成后初始化地图（轮询等待 AMapLoader 就绪）
+(function waitForAMap() {
+    if (window.AMapLoader) { initMap(); return; }
+    setTimeout(waitForAMap, 200);
+})();
+</script>
+</body>
+</html>
