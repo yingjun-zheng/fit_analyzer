@@ -1,4 +1,4 @@
-# 🚴 骑行FIT数据分析器（Fit Analyzer）
+# ![输入图片说明](imgs/logo.png) 骑行FIT数据分析器（Fit Analyzer）
  [EN](/README_EN.md) · [中文](/README.md) 
 
 免费、本地运行的**骑行 FIT 数据离线分析软件**（纯桌面 Windows 应用，PySide6 原生界面，无浏览器、无本地服务），参考 Garmin Connect / 行者 的骑行数据分析功能：
@@ -42,8 +42,6 @@
 
 ![路径规划，ai自动模式](imgs/路径规划，ai自动模式.png)
 
-> 界面截图由 `tools/make_screens.py` 自动生成——界面改动后运行
-> `.venv\Scripts\python.exe tools\make_screens.py` 即可一键刷新，保持文档与软件同步。
 
 ---
 
