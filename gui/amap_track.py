@@ -56,12 +56,33 @@ function renderTrack(){
     var map = new AMap.Map('map', { viewMode: '2D', zoom: 13 });
     var path = PTS.map(function(p){ var g = wgs84ToGcj02(p.lon, p.lat); return [g[0], g[1]]; });
     if(!path.length){ document.body.innerHTML = '<div style="color:#ff9a9a;padding:14px">该活动无 GPS 轨迹</div>'; return; }
-    var line = new AMap.Polyline({ path: path, strokeColor: '#1e88e5', strokeWeight: 5, strokeOpacity: 0.95, showDir: true, lineJoin: 'round', lineCap: 'round' });
+    // 隐藏的完整路径仅用于 fitView：动画期间视角固定，避免边画边缩放
+    var full = new AMap.Polyline({ path: path, strokeOpacity: 0, strokeWeight: 5 });
+    map.add(full);
+    map.setFitView([full], false, [40,40,40,40]);
+    // 起点→终点 渐进绘制动画
+    var line = new AMap.Polyline({ path: [path[0]], strokeColor: '#1e88e5', strokeWeight: 5, strokeOpacity: 0.95, showDir: true, lineJoin: 'round', lineCap: 'round' });
     map.add(line);
-    var s = path[0], e = path[path.length - 1];
-    map.add(new AMap.Marker({ position: s, content: '<div style=\\"width:14px;height:14px;border-radius:50%;background:#22c55e;border:2px solid #fff;box-shadow:0 0 0 2px rgba(34,197,94,.4)\\"></div>', offset: new AMap.Pixel(-7,-7) }));
-    map.add(new AMap.Marker({ position: e, content: '<div style=\\"width:14px;height:14px;border-radius:50%;background:#ef4444;border:2px solid #fff;box-shadow:0 0 0 2px rgba(239,68,68,.4)\\"></div>', offset: new AMap.Pixel(-7,-7) }));
-    map.setFitView([line], false, [40,40,40,40]);
+    map.add(new AMap.Marker({ position: path[0], content: '<div style=\\"width:14px;height:14px;border-radius:50%;background:#22c55e;border:2px solid #fff;box-shadow:0 0 0 2px rgba(34,197,94,.4)\\"></div>', offset: new AMap.Pixel(-7,-7) }));
+    var head = new AMap.Marker({ position: path[0], content: '<div style=\\"width:12px;height:12px;border-radius:50%;background:#1e88e5;border:2px solid #fff;box-shadow:0 0 6px rgba(30,136,229,.8)\\"></div>', offset: new AMap.Pixel(-6,-6), zIndex: 120 });
+    map.add(head);
+    var endMarker = new AMap.Marker({ position: path[path.length - 1], content: '<div style=\\"width:14px;height:14px;border-radius:50%;background:#ef4444;border:2px solid #fff;box-shadow:0 0 0 2px rgba(239,68,68,.4)\\"></div>', offset: new AMap.Pixel(-7,-7) });
+    // 限制 setPath 调用次数（大轨迹按 stride 量化），保证动画流畅
+    var stride = Math.max(1, Math.ceil(path.length / 240));
+    var DUR = Math.max(900, Math.min(2600, path.length * 4));
+    var t0 = null;
+    function step(ts){
+      if(t0 === null) t0 = ts;
+      var t = Math.min(1, (ts - t0) / DUR);
+      var e = 1 - (1 - t) * (1 - t); // easeOutQuad
+      var idx = Math.floor(e * (path.length - 1) / stride) * stride;
+      if(t >= 1) idx = path.length - 1;
+      line.setPath(path.slice(0, idx + 1));
+      head.setPosition(path[idx]);
+      if(t < 1){ requestAnimationFrame(step); }
+      else { map.remove(head); map.add(endMarker); }
+    }
+    requestAnimationFrame(step);
   }).catch(function(err){ document.body.innerHTML = '<div style="color:#ff9a9a;padding:14px">地图加载失败：' + ((err && err.message) || err) + '</div>'; });
 }
 if(window.AMapLoader){ renderTrack(); } else { window.addEventListener('load', renderTrack); }

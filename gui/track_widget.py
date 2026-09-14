@@ -1,9 +1,10 @@
 """轨迹控件：固定背景图片 + 轨迹叠加（QPainter 绘制，纯桌面无浏览器）。"""
-from PySide6.QtCore import QRectF, Qt
+from PySide6.QtCore import QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
 MARGIN = 0.08  # 轨迹在背景图中的留白比例
+ANIM_INTERVAL_MS = 16  # 起点→终点绘制动画的帧间隔
 
 
 class TrackWidget(QWidget):
@@ -12,6 +13,11 @@ class TrackWidget(QWidget):
         self._image_path = image_path
         self.pixmap = QPixmap(image_path)
         self.points = []  # [(lat, lon, alt), ...]
+        self._progress = 1.0  # 轨迹绘制进度 0→1（起点→终点动画）
+        self._anim_duration = 1200
+        self._anim = QTimer(self)
+        self._anim.setInterval(ANIM_INTERVAL_MS)
+        self._anim.timeout.connect(self._tick)
         self.setMinimumHeight(460)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
@@ -24,6 +30,21 @@ class TrackWidget(QWidget):
 
     def set_track(self, points):
         self.points = [p for p in (points or []) if p[0] is not None and p[1] is not None]
+        # 起点→终点渐进绘制动画，时长随点数自适应（0.8s ~ 2s）
+        self._anim_duration = max(800, min(2000, len(self.points)))
+        if len(self.points) >= 2:
+            self._progress = 0.0
+            self._anim.start()
+        else:
+            self._progress = 1.0
+            self._anim.stop()
+        self.update()
+
+    def _tick(self):
+        step = ANIM_INTERVAL_MS / max(self._anim_duration, 1)
+        self._progress = min(1.0, self._progress + step)
+        if self._progress >= 1.0:
+            self._anim.stop()
         self.update()
 
     def _to_flat(self, iw, ih):
@@ -67,13 +88,25 @@ class TrackWidget(QWidget):
             p.drawText(QRectF(ox, oy, dw, dh), Qt.AlignCenter, "无轨迹数据")
             return
         flat = self._to_flat(iw, ih)
+        n = len(flat)
+        # 按 _progress 渐进绘制（动画结束后画出完整轨迹）
+        prog = max(0.0, min(1.0, self._progress))
+        count = 1.0 + prog * (n - 1)  # 已画出的“点数”（含小数插值部分）
+        k = int(count)
+        frac = count - k
         path = QPainterPath()
-        for i, (fy, fx) in enumerate(flat):
-            sx, sy = ox + fx * scale, oy + fy * scale
-            if i == 0:
-                path.moveTo(sx, sy)
-            else:
-                path.lineTo(sx, sy)
+        path.moveTo(ox + flat[0][1] * scale, oy + flat[0][0] * scale)
+        for i in range(1, min(k, n)):
+            fy, fx = flat[i]
+            path.lineTo(ox + fx * scale, oy + fy * scale)
+        head = flat[k - 1] if k >= 1 else flat[0]
+        if frac > 0 and k < n:
+            fy0, fx0 = flat[k - 1]
+            fy1, fx1 = flat[k]
+            hy = fy0 + (fy1 - fy0) * frac
+            hx = fx0 + (fx1 - fx0) * frac
+            path.lineTo(ox + hx * scale, oy + hy * scale)
+            head = (hy, hx)
         p.setPen(QPen(QColor("#1e88e5"), 3.0, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
         p.drawPath(path)
 
@@ -84,4 +117,11 @@ class TrackWidget(QWidget):
             p.drawEllipse(QRectF(sx - 6, sy - 6, 12, 12))
 
         dot(flat[0], "#2e7d32")
-        dot(flat[-1], "#e53935")
+        if prog >= 1.0:
+            dot(flat[-1], "#e53935")
+        else:
+            # 动画进行中：画一个随轨迹移动的“骑手”点
+            sy, sx = oy + head[0] * scale, ox + head[1] * scale
+            p.setBrush(QColor("#1e88e5"))
+            p.setPen(QPen(QColor("white"), 2))
+            p.drawEllipse(QRectF(sx - 7, sy - 7, 14, 14))

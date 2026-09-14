@@ -53,7 +53,8 @@ function initMap() {
     AMapLoader.load({ key: '__KEY__', version: '2.0' }).then(function() {
         document.body.setAttribute('data-status', 'loaded');
         var c = INIT_CENTER ? wgs84ToGcj02(INIT_CENTER[0], INIT_CENTER[1]) : [116.397, 39.909];
-        map = new AMap.Map('map', { viewMode: '2D', zoom: 13, center: c });
+        // 定位到最近骑行起点时直接放大到楼栋级（zoom 16），免去手动缩放；无定位保持城市级默认视野
+        map = new AMap.Map('map', { viewMode: '2D', zoom: INIT_CENTER ? 16 : 13, center: c });
         map.on('click', function(e) {
             var lng = e.lnglat.getLng();
             var lat = e.lnglat.getLat();
