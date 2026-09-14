@@ -44,16 +44,21 @@ _HTML_TPL = """<!DOCTYPE html>
 <meta charset="utf-8" />
 <script>window._AMapSecurityConfig = { securityJsCode: '__SECURITY__' };</script>
 <script src="https://webapi.amap.com/loader.js"></script>
-<style>html,body{margin:0;height:100%;background:#0f1115}#map{height:100%}</style>
+<style>html,body{margin:0;height:100%;background:#0f1115}#map{height:100%}
+.fly-btn{position:fixed;top:10px;right:10px;z-index:200;background:rgba(15,17,21,.78);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px;padding:6px 12px;font-size:13px;cursor:pointer;user-select:none}
+.fly-btn:hover{background:rgba(30,136,229,.85);border-color:#1e88e5}
+.fly-btn.active{background:#1e88e5;border-color:#1e88e5}
+</style>
 </head>
 <body>
 <div id="map"></div>
+<button class="fly-btn" id="flyBtn" style="display:none">&#9654; 飞行视角</button>
 <script>
 __WGS__
 var PTS = __DATA__;
 function renderTrack(){
   AMapLoader.load({ key: '__KEY__', version: '2.0' }).then(function(){
-    var map = new AMap.Map('map', { viewMode: '2D', zoom: 13 });
+    var map = new AMap.Map('map', { viewMode: '3D', zoom: 13 });  // 3D 模式：支持 pitch/rotation，供飞行视角使用（pitch=0 时与 2D 观感一致）
     var path = PTS.map(function(p){ var g = wgs84ToGcj02(p.lon, p.lat); return [g[0], g[1]]; });
     if(!path.length){ document.body.innerHTML = '<div style="color:#ff9a9a;padding:14px">该活动无 GPS 轨迹</div>'; return; }
     // 隐藏的完整路径仅用于 fitView：动画期间视角固定，避免边画边缩放
@@ -80,9 +85,58 @@ function renderTrack(){
       line.setPath(path.slice(0, idx + 1));
       head.setPosition(path[idx]);
       if(t < 1){ requestAnimationFrame(step); }
-      else { map.remove(head); map.add(endMarker); }
+      else { map.remove(head); map.add(endMarker); flyBtn.style.display = 'block'; }
     }
     requestAnimationFrame(step);
+    // ── 飞行视角（flyover）：相机沿轨迹飞行，卫星图 + 55° 俯仰 + 朝向随航向 ──
+    var flyBtn = document.getElementById('flyBtn');
+    var flying = false, flyRaf = null, satLayer = null, flyStartTs = 0;
+    function stopFly(restore){
+      flying = false;
+      if(flyRaf){ cancelAnimationFrame(flyRaf); flyRaf = null; }
+      flyBtn.classList.remove('active');
+      flyBtn.innerHTML = '&#9654; 飞行视角';
+      if(restore){
+        if(satLayer){ map.remove(satLayer); satLayer = null; }
+        map.setPitch(0);
+        map.setRotation(0);
+        map.setFitView([line], false, [40,40,40,40]);
+      }
+    }
+    function startFly(){
+      if(path.length < 2) return;
+      flying = true;
+      flyBtn.classList.add('active');
+      flyBtn.innerHTML = '&#9632; 退出飞行';
+      if(!satLayer){ satLayer = new AMap.TileLayer.Satellite(); map.add(satLayer); }
+      flyStartTs = Date.now();  // 启动保护窗：忽略 setZoom/setPitch 自身触发的事件，防止飞行刚启动就被取消
+      map.setZoom(17);
+      map.setPitch(55);
+      var DUR = Math.max(12000, Math.min(45000, path.length * 10));
+      var t0 = null;
+      function step(ts){
+        if(!flying) return;
+        if(t0 === null) t0 = ts;
+        var t = Math.min(1, (ts - t0) / DUR);
+        var i = Math.floor(t * (path.length - 1));
+        var cur = path[i];
+        var look = path[Math.min(path.length - 1, i + 8)];  // 前视点：相机看向飞行方向前方
+        map.setCenter(look);
+        var dLon = (look[0] - cur[0]) * Math.cos(cur[1] * Math.PI / 180);
+        var dLat = look[1] - cur[1];
+        if(Math.abs(dLon) > 1e-9 || Math.abs(dLat) > 1e-9){
+          map.setRotation((Math.atan2(dLon, dLat) * 180 / Math.PI + 360) % 360);
+        }
+        if(t < 1){ flyRaf = requestAnimationFrame(step); }
+        else { stopFly(true); }
+      }
+      flyRaf = requestAnimationFrame(step);
+    }
+    flyBtn.onclick = function(){ flying ? stopFly(true) : startFly(); };
+    // 用户手动拖动/缩放/旋转时自动退出飞行，避免相机与手势打架
+    ['dragstart','zoomstart','rotatestart','pitchstart'].forEach(function(ev){
+      map.on(ev, function(){ if(flying && Date.now() - flyStartTs > 500) stopFly(true); });
+    });
   }).catch(function(err){ document.body.innerHTML = '<div style="color:#ff9a9a;padding:14px">地图加载失败：' + ((err && err.message) || err) + '</div>'; });
 }
 if(window.AMapLoader){ renderTrack(); } else { window.addEventListener('load', renderTrack); }
