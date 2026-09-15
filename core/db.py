@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS activities (
     sub_sport_cn TEXT,
     start_time TEXT,
     start_ts INTEGER,
+    month TEXT,
     total_distance_m REAL,
     timer_s REAL,
     elapsed_s REAL,
@@ -43,6 +44,8 @@ CREATE TABLE IF NOT EXISTS activities (
 );
 CREATE INDEX IF NOT EXISTS idx_act_start ON activities(start_ts);
 CREATE INDEX IF NOT EXISTS idx_act_month ON activities(start_time);
+-- 注意：month 列的索引不在本脚本创建——旧库此时还没有 month 列，
+-- 必须等 _migrate() 完成 ALTER TABLE 加列后再建（见 _migrate 末尾）。
 
 CREATE TABLE IF NOT EXISTS laps (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -108,7 +111,7 @@ class DB:
 
     @_locked
     def _migrate(self):
-        """旧库补新列（设备识别字段 / TSS 缓存）。"""
+        """旧库补新列（设备识别字段 / TSS 缓存 / 月份物化列）。"""
         cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(activities)")}
         adds = {
             "device_brand": "TEXT",
@@ -120,11 +123,25 @@ class DB:
             "tss": "REAL",
             "tss_method": "TEXT",
             "tss_sig": "TEXT",
+            "month": "TEXT",
         }
         for col, typ in adds.items():
             if col not in cols:
                 self.conn.execute(f"ALTER TABLE activities ADD COLUMN {col} {typ}")
                 log.info("数据库迁移：activities 增加列 %s", col)
+        # month 物化列回填：与旧查询 substr(start_time,1,7) 保持完全一致的口径
+        # （按码表本地显示时间归属月份）。month IS NULL 仅存在于旧库首次迁移
+        # 或极端中断场景，平时这条 UPDATE 命中 0 行，启动开销可忽略。
+        self.conn.execute(
+            "UPDATE activities SET month=substr(start_time,1,7)"
+            " WHERE month IS NULL AND start_time IS NOT NULL"
+        )
+        # month 索引必须在加列之后创建：旧库的 activities 没有 month 列，
+        # 若放在 _SCHEMA 里会先于迁移执行，直接报 no such column: month。
+        # IF NOT EXISTS 保证新库（建表自带 month）与旧库（刚加列）都正确。
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_act_month_col ON activities(month)"
+        )
 
     @_locked
     def close(self):
@@ -143,19 +160,20 @@ class DB:
         self.conn.execute(
             """INSERT INTO activities (
                 file_hash, file_name, name, device, device_brand, product, product_name, hw_version, sw_version,
-                sport, sub_sport_cn, start_time, start_ts,
+                sport, sub_sport_cn, start_time, start_ts, month,
                 total_distance_m, timer_s, elapsed_s, moving_s,
                 avg_speed_ms, max_speed_ms, avg_hr, max_hr, min_hr,
                 avg_cad, max_cad, calories, ascent_m, descent_m,
                 avg_alt_m, max_alt_m, min_alt_m, avg_temp, max_temp, min_temp,
                 lat, lon, record_count, imported_at, tss, tss_method, tss_sig)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(file_hash) DO UPDATE SET
                 file_name=excluded.file_name, name=excluded.name,
                 device=excluded.device, device_brand=excluded.device_brand,
                 product=excluded.product, product_name=excluded.product_name,
                 hw_version=excluded.hw_version, sw_version=excluded.sw_version,
                 start_time=excluded.start_time, start_ts=excluded.start_ts,
+                month=excluded.month,
                 total_distance_m=excluded.total_distance_m, timer_s=excluded.timer_s,
                 avg_speed_ms=excluded.avg_speed_ms, max_speed_ms=excluded.max_speed_ms,
                 avg_hr=excluded.avg_hr, max_hr=excluded.max_hr, avg_cad=excluded.avg_cad,
@@ -169,6 +187,7 @@ class DB:
                 data.get("device_brand", ""), data.get("product"), data.get("product_name", ""),
                 data.get("hw_version", ""), data.get("sw_version", ""),
                 data["sport"], data.get("sub_sport_cn", ""), data["start_time"], data["start_ts"],
+                (data["start_time"] or "")[:7] if data.get("start_time") else None,
                 s["total_distance_m"], s["timer_s"], s["elapsed_s"], s["moving_s"],
                 s["avg_speed_ms"], s["max_speed_ms"], s["avg_hr"], s["max_hr"], s["min_hr"],
                 s["avg_cad"], s["max_cad"], s["calories"], s["ascent_m"], s["descent_m"],
@@ -237,15 +256,17 @@ class DB:
     # ---------------- 查询 ----------------
     @_locked
     def months(self):
+        # 按物化列 month 聚合并走索引 idx_act_month_col，替代旧 substr 全表扫描；
+        # 口径不变：month 在写入时即按码表本地显示时间取 substr(start_time,1,7)
         rows = self.conn.execute(
-            """SELECT substr(start_time,1,7) AS month, COUNT(*) AS cnt,
+            """SELECT month AS m, COUNT(*) AS cnt,
                       SUM(total_distance_m) AS dist, SUM(timer_s) AS timer,
                       SUM(ascent_m) AS ascent, SUM(calories) AS cal
-               FROM activities GROUP BY month ORDER BY month DESC"""
+               FROM activities GROUP BY m ORDER BY m DESC"""
         ).fetchall()
         out = []
         for r in rows:
-            month = r["month"] or "未知"
+            month = r["m"] or "未知"
             dist_km = (r["dist"] or 0) / 1000.0
             hours = (r["timer"] or 0) / 3600.0
             out.append({
@@ -262,8 +283,9 @@ class DB:
     @_locked
     def list_activities(self, month=None, limit=500):
         if month:
+            # 走物化列 month 的索引；口径与 substr(start_time,1,7) 一致（见 _migrate 回填）
             rows = self.conn.execute(
-                """SELECT * FROM activities WHERE substr(start_time,1,7)=?
+                """SELECT * FROM activities WHERE month=?
                    ORDER BY start_ts DESC LIMIT ?""", (month, limit)
             ).fetchall()
         else:
@@ -312,6 +334,25 @@ class DB:
     def delete_activity(self, aid):
         self.conn.execute("DELETE FROM activities WHERE id=?", (aid,))
         self.conn.commit()
+
+    @_locked
+    def delete_month(self, month):
+        """删除整月活动（含记圈/逐条记录）。返回删除的活动条数。
+
+        显式先删子表再删主表：比依赖外键逐行级联快得多
+        （一条活动可达数万条 records，整月级联会显著卡顿）。
+        """
+        self.conn.execute(
+            "DELETE FROM records WHERE activity_id IN (SELECT id FROM activities WHERE month=?)",
+            (month,))
+        self.conn.execute(
+            "DELETE FROM laps WHERE activity_id IN (SELECT id FROM activities WHERE month=?)",
+            (month,))
+        cur = self.conn.execute("DELETE FROM activities WHERE month=?", (month,))
+        self.conn.commit()
+        n = cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
+        log.info("删除整月 %s：%d 条活动", month, n)
+        return n
 
     @_locked
     def count(self):

@@ -39,7 +39,8 @@ def main():
     parser.add_argument("--data-dir", default=None, help="数据目录（默认 %APPDATA%/FitAnalyzer）")
     parser.add_argument("--debug", action="store_true", help="更详细日志")
     parser.add_argument("--selftest", action="store_true", help="离屏自检：导入指定目录的 FIT 并打开一个活动后退出")
-    parser.add_argument("--import-dir", default=None, help="自检模式：从此目录导入 FIT（默认 F:/byciclefits）")
+    parser.add_argument("--import-dir", default=None,
+                        help="自检模式：从此目录导入 FIT（未指定时尝试环境变量 FITANALYZER_TEST_DATA）")
     parser.add_argument("--quit-test", action="store_true", help="离屏启动后 2 秒自动退出（验证正常退出路径）")
     args = parser.parse_args()
 
@@ -53,6 +54,7 @@ def main():
     from core import logging_setup
     from core.config import Config
     from core import db as db_mod
+    from core import http_utils
 
     data_dir = Path(args.data_dir) if args.data_dir else default_data_dir()
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -65,6 +67,9 @@ def main():
     config = Config(data_dir / "config.json")
     db = db_mod.DB(data_dir / "fit.db")
     logger.info("数据库中已有活动数: %d", db.count())
+
+    # HTTPS 证书降级为显式配置项（默认关闭 = 始终校验证书）
+    http_utils.set_insecure_fallback(bool(config.get("ssl_insecure_fallback")))
 
     from PySide6.QtWidgets import QApplication
 
@@ -118,10 +123,13 @@ def _selftest(app, win, args):
 
     import_dir = Path(args.import_dir) if args.import_dir else None
     if import_dir is None:
-        for cand in (Path(r"F:\byciclefits"), Path(r"C:\Users\zhengyingjun\Documents\deepseek\fittestdata")):
+        # 不再硬编码个人数据路径：自检数据目录通过 --import-dir 或
+        # 环境变量 FITANALYZER_TEST_DATA 指定，未指定则跳过导入环节。
+        env_dir = os.environ.get("FITANALYZER_TEST_DATA")
+        if env_dir:
+            cand = Path(env_dir)
             if cand.exists() and any(cand.rglob("*.fit")):
                 import_dir = cand
-                break
     if import_dir is not None and import_dir.exists():
         files = sorted(import_dir.rglob("*.fit"))  # rglob 支持递归子目录
         logger.info("自检：导入 %d 个 FIT", len(files))

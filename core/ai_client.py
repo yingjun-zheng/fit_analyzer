@@ -80,7 +80,8 @@ class AIClient:
         except http_utils.HTTPError as e:
             msg = str(e)
             hint = ""
-            if "404" in msg and "not found" in msg.lower():
+            # 结构化判断：HTTPError 携带状态码，比字符串匹配可靠
+            if getattr(e, "code", None) == 404:
                 # 模型名不存在：把服务器可用模型列出来方便用户自查
                 try:
                     t = self.test()

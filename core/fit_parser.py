@@ -422,15 +422,33 @@ def parse_fit_file(path: Path):
     }
 
 
-def parse_many(paths):
-    """批量解析；返回 (results, errors)。results: [{path, data}]，errors: [{path, error}]。"""
-    results, errors = [], []
-    for p in paths:
+def parse_many(paths, max_workers=None):
+    """批量解析；返回 (results, errors)。results: [{path, data}]，errors: [{path, error}]。
+
+    线程池并行：单文件解析含文件 IO + 大量 CPU 计算，多线程可明显缩短整批耗时
+    （fitparse 无跨文件共享状态，线程安全）。结果严格按输入顺序返回，调用方无需
+    关心并行细节。不使用多进程：PyInstaller 打包下 spawn/freeze 复杂且结果需序列化，
+    得不偿失。
+    """
+    import os
+    from concurrent.futures import ThreadPoolExecutor
+
+    paths = list(paths)
+    if not paths:
+        return [], []
+
+    def _one(p):
         try:
-            results.append({"path": str(p), "data": parse_fit_file(p)})
+            return "ok", {"path": str(p), "data": parse_fit_file(p)}
         except FitParseError as e:
-            errors.append({"path": str(p), "error": str(e)})
+            return "err", {"path": str(p), "error": str(e)}
         except Exception as e:  # 兜底
             log.exception("解析 %s 异常", p)
-            errors.append({"path": str(p), "error": f"未知错误: {e}"})
+            return "err", {"path": str(p), "error": f"未知错误: {e}"}
+
+    results, errors = [], []
+    workers = max_workers or min(8, (os.cpu_count() or 4))
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        for kind, item in ex.map(_one, paths):  # ex.map 保序
+            (results if kind == "ok" else errors).append(item)
     return results, errors

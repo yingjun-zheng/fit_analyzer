@@ -254,6 +254,7 @@ class MainWindow(QMainWindow):
         tb.setObjectName("mainToolBar")
         for item in [
                 ("📁 批量导入", self.import_files, "批量导入 FIT 文件（也可直接拖拽 .fit 进窗口）"),
+                ("🗑 删除", self.delete_selected, "删除左侧选中的活动记录（可多选，快捷键 Del）"),
                 ("📤 导出 GPX", self.export_gpx, "把当前选中的活动导出为 GPX"),
                 None,
                 ("🧭 路径规划", self.open_plan, "高德地图点击选点，逐段规划骑行路线"),
@@ -702,12 +703,51 @@ class MainWindow(QMainWindow):
         return ids
 
     def delete_selected(self):
-        """工具栏：删除选中的活动（可多选）。"""
-        ids = self._selected_activity_ids()
-        if not ids:
-            QMessageBox.information(self, "删除", "请先在左侧选中要删除的活动\n（多选：按住 Ctrl 或 Shift 点击）")
+        """工具栏：删除选中——活动可多选；选中月份节点时删除整月数据。"""
+        sel = self.month_tree.selectedItems()
+        if not sel:
+            QMessageBox.information(self, "删除",
+                                    "请先在左侧选中要删除的活动或月份\n（多选：按住 Ctrl 或 Shift 点击）")
             return
-        self._delete_ids(ids, f"确定删除选中的 {len(ids)} 条记录？")
+        sel_months, act_ids = [], []
+        for item in sel:
+            kind, data = item.data(0, Qt.UserRole)
+            if kind == MONTH and data not in sel_months:
+                sel_months.append(data)
+            elif kind == ACTIVITY and data not in act_ids:
+                act_ids.append(data)
+        if sel_months:
+            self._delete_months(sel_months, extra_ids=act_ids)
+        elif act_ids:
+            self._delete_ids(act_ids, f"确定删除选中的 {len(act_ids)} 条记录？")
+
+    def _delete_months(self, months, extra_ids=None):
+        """删除整月数据（可附带散选的活动），统一确认后执行。"""
+        extra_ids = [i for i in (extra_ids or [])]
+        parts, total = [], 0
+        for m in months:
+            cnt = len(self.db.list_activities(month=m, limit=100000))
+            total += cnt
+            parts.append(f"「{m}」{cnt} 条")
+        grand = total + len(extra_ids)
+        if grand == 0:
+            QMessageBox.information(self, "删除", "所选月份暂无记录")
+            return
+        extra = f"，另加选中活动 {len(extra_ids)} 条" if extra_ids else ""
+        ret = QMessageBox.question(
+            self, "确认删除",
+            f"确定删除整月数据？{'、'.join(parts)}{extra}，共 {grand} 条。\n"
+            "（删除该月全部记录，FIT 原文件不受影响，可重新导入）",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if ret != QMessageBox.Yes:
+            return
+        for m in months:
+            self.db.delete_month(m)
+        for aid in extra_ids:
+            self.db.delete_activity(aid)
+        log.info("删除整月 %s（含散选 %d 条）", months, len(extra_ids))
+        self._after_delete()
+        self.statusBar().showMessage(f"已删除 {grand} 条", 4000)
 
     def reidentify_devices(self):
         """按当前“设备型号表”重新识别所有活动的码表型号。"""
@@ -728,8 +768,12 @@ class MainWindow(QMainWindow):
 
         menu = QMenu(self)
         act_one = None
-        if item.data(0, Qt.UserRole)[0] == ACTIVITY:
+        act_month = None
+        kind0, data0 = item.data(0, Qt.UserRole)
+        if kind0 == ACTIVITY:
             act_one = menu.addAction("删除此记录")
+        elif kind0 == MONTH:
+            act_month = menu.addAction(f"🗑 删除整月数据…（{data0}）")
         sel_ids = self._selected_activity_ids()
         act_sel = None
         if len(sel_ids) > 1:
@@ -739,6 +783,8 @@ class MainWindow(QMainWindow):
         chosen = menu.exec(self.month_tree.viewport().mapToGlobal(pos))
         if chosen is act_one:
             self._delete_ids([item.data(0, Qt.UserRole)[1]], "确定删除这条记录？")
+        elif chosen is act_month:
+            self._delete_months([data0])
         elif chosen is act_sel:
             self._delete_ids(sel_ids, f"确定删除选中的 {len(sel_ids)} 条记录？")
         elif chosen is act_all:

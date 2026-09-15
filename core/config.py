@@ -1,7 +1,10 @@
 """配置模块：区间阈值、AI、地图等（JSON 持久化）。"""
 import json
+import logging
 import threading
 from pathlib import Path
+
+log = logging.getLogger("fit.config")
 
 DEFAULTS = {
     "app_name": "骑行FIT数据分析器",
@@ -39,6 +42,10 @@ DEFAULTS = {
     # ---- 高德路径规划（可选） ----
     # amap_web_key 须为「Web服务」类型（不同于上面的 JS API key），用于骑行路径规划
     "amap_web_key": "",
+    # ---- 网络诊断 ----
+    # HTTPS 证书校验失败时是否允许降级为不校验（代理/TLS 拦截网络应急用）。
+    # 默认关闭以保证安全（API Key 等凭据不被中间人截获）；开启后降级重试会打 WARNING。
+    "ssl_insecure_fallback": False,
 }
 
 _SENSITIVE = {"ai_api_key", "amap_security", "amap_web_key"}
@@ -59,7 +66,9 @@ class Config:
                 if isinstance(user, dict):
                     self.data.update({k: v for k, v in user.items() if k in DEFAULTS})
         except Exception:
-            pass
+            # 配置文件损坏/被占用时回退默认值继续运行，但必须留痕，
+            # 否则用户不知道为什么设置全变回默认了。
+            log.warning("配置加载失败，使用默认配置（%s）", self.path, exc_info=True)
 
     def save(self):
         with self._lock:
@@ -70,7 +79,8 @@ class Config:
                     json.dump(self.data, f, ensure_ascii=False, indent=2)
                 tmp.replace(self.path)
             except Exception:
-                pass
+                # 保存失败（磁盘只读/权限等）会让本次设置改动丢失，需留痕排查。
+                log.warning("配置保存失败：%s", self.path, exc_info=True)
 
     def get(self, key, default=None):
         return self.data.get(key, default if default is not None else DEFAULTS.get(key))

@@ -144,6 +144,12 @@ class SettingsDialog(QDialog):
         diag_title = QLabel("诊断与日志")
         diag_title.setObjectName("h3")
         form.addRow(diag_title)
+        # HTTPS 证书校验降级：默认关闭（安全）；代理/TLS 拦截网络下可临时开启应急
+        self.chkSslFallback = QCheckBox(
+            "HTTPS 证书校验失败时降级为不校验（代理/TLS 拦截网络应急用，存在中间人风险）"
+        )
+        self.chkSslFallback.setChecked(bool(d.get("ssl_insecure_fallback")))
+        form.addRow(self.chkSslFallback)
         diag_row = QHBoxLayout()
         btn_logs = QPushButton("📜 查看日志")
         btn_logs.clicked.connect(self._open_logs)
@@ -272,7 +278,14 @@ class SettingsDialog(QDialog):
             "amap_key": self.edAmapKey.text().strip(),
             "amap_security": self.edAmapSec.text().strip(),
             "amap_web_key": self.edAmapWebKey.text().strip(),
+            "ssl_insecure_fallback": self.chkSslFallback.isChecked(),
         })
+        # 让 SSL 降级开关立即生效（下次请求即按新配置），不必重启应用
+        try:
+            from core import http_utils
+            http_utils.set_insecure_fallback(self.chkSslFallback.isChecked())
+        except Exception:
+            pass
         self.accept()
 
 

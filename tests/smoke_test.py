@@ -25,14 +25,20 @@ def check(name, cond, extra=""):
 
 
 def main():
-    # 测试数据：优先 F:\byciclefits，其次 C:\Users\zhengyingjun\Documents\deepseek\fittestdata
+    # 测试数据定位：优先环境变量 FITANALYZER_TEST_DATA，其次历史默认目录
     fit_dir = None
-    for cand in (Path(r"F:\byciclefits"), Path(r"C:\Users\zhengyingjun\Documents\deepseek\fittestdata")):
+    candidates = []
+    import os
+    env_dir = os.environ.get("FITANALYZER_TEST_DATA")
+    if env_dir:
+        candidates.append(Path(env_dir))
+    candidates += [Path(r"F:\byciclefits"), Path(r"C:\Users\zhengyingjun\Documents\deepseek\fittestdata")]
+    for cand in candidates:
         if cand.exists() and any(cand.glob("*.fit")):
             fit_dir = cand
             break
     if fit_dir is None:
-        print("!! 未找到 FIT 测试数据（F:\\byciclefits 或 fittestdata）")
+        print("!! 未找到 FIT 测试数据（可用环境变量 FITANALYZER_TEST_DATA 指定目录）")
         return 1
     files = sorted(fit_dir.glob("*.fit"))
     print(f"真实 FIT 文件: {len(files)} 个（来自 {fit_dir}）")
@@ -112,8 +118,9 @@ def main():
             except AIError as e:
                 msg = str(e)
                 check("错误含可用模型列表", "可用的模型" in msg, msg[:200])
-        except Exception:
-            print("  [INFO] AI 客户端导入失败，跳过")
+        except Exception as e:
+            # 外层捕获不止导入失败：Ollama 未运行时 URLError 会从 chat() 直接冒出
+            print(f"  [INFO] AI 联调跳过（本地 AI 未运行或不可达: {type(e).__name__}）")
 
     db.close()
     shutil.rmtree(tmp, ignore_errors=True)

@@ -82,7 +82,10 @@ function initTrackMap(){
   // 隐藏的完整路径仅用于 fitView：动画期间视角固定，避免边画边缩放
   var full = new AMap.Polyline({ path: path, strokeOpacity: 0, strokeWeight: 5 });
   map.add(full);
-  map.setFitView([full], false, [40,40,40,40]);
+  // 首次加载视野贴合：地图初始化完成前 setFitView 可能被忽略（表现为不放大），
+  // 因此立即调一次 + complete 后再调一次 + 2.5s 兜底，三次保证轨迹进入视野
+  function fitToTrack(){ try{ map.setFitView([full], false, [40,40,40,40]); }catch(e){} }
+  fitToTrack();
   // 起点→终点 渐进绘制动画
   var line = new AMap.Polyline({ path: [path[0]], strokeColor: '#1e88e5', strokeWeight: 5, strokeOpacity: 0.95, showDir: true, lineJoin: 'round', lineCap: 'round' });
   map.add(line);
@@ -95,6 +98,7 @@ function initTrackMap(){
   var DUR = Math.max(2000, Math.min(8000, path.length * 10));  // 放慢节奏，避免瓦片未加载完轨迹就画完
   var t0 = null;
   var drawStarted = false;
+  var rider = null;
   function startDraw(){
     if(drawStarted) return;
     drawStarted = true;
@@ -109,11 +113,47 @@ function initTrackMap(){
     line.setPath(path.slice(0, idx + 1));
     head.setPosition(path[idx]);
     if(t < 1){ requestAnimationFrame(step); }
-    else { map.remove(head); map.add(endMarker); }
+    else { map.remove(head); map.add(endMarker); startRider(); }
   }
-  // 等地图瓦片加载完（complete 事件）再开始画轨迹；2.5s 兜底防止事件不触发
-  map.on('complete', startDraw);
-  setTimeout(startDraw, 2500);
+  // ---- 🚴 骑手：轨迹画完后沿路线循环骑行（可暂停/继续）----
+  function startRider(){
+    if(rider) return;
+    var rideStride = Math.max(1, Math.ceil(path.length / 240));
+    var ridePath = [];
+    for(var i = 0; i < path.length; i += rideStride){ ridePath.push(path[i]); }
+    if(ridePath[ridePath.length - 1] !== path[path.length - 1]) ridePath.push(path[path.length - 1]);
+    // AMap 2.0 的 duration 是「每一段」的时长：按整圈约 30s 换算每段时长
+    var perSeg = Math.max(40, Math.min(120, Math.floor(30000 / Math.max(1, ridePath.length - 1))));
+    rider = new AMap.Marker({
+      position: path[0],
+      content: '<div style=\\"font-size:30px;line-height:30px;transform:translate(-50%,-88%);filter:drop-shadow(0 2px 3px rgba(0,0,0,.35));user-select:none\\">🚴</div>',
+      offset: new AMap.Pixel(0, 0),
+      zIndex: 130
+    });
+    map.add(rider);
+    try {
+      rider.moveAlong(ridePath, { duration: perSeg, autoRotation: false, circle: true });
+    } catch(e) { return; }  // 老版本无 MoveAnimation 时静默跳过，不影响轨迹展示
+    // 悬浮按钮：暂停/继续骑行动画
+    var btn = document.createElement('button');
+    btn.textContent = '⏸';
+    btn.title = '暂停/继续 骑行小人';
+    btn.style.cssText = 'position:fixed;right:12px;bottom:12px;width:36px;height:36px;border:none;border-radius:50%;' +
+      'background:rgba(15,17,21,.72);color:#fff;font-size:15px;cursor:pointer;z-index:999;box-shadow:0 2px 6px rgba(0,0,0,.35)';
+    var moving = true;
+    btn.onclick = function(){
+      moving = !moving;
+      try {
+        if(moving){ rider.moveResume(); } else { rider.movePause(); }
+      } catch(e) {}
+      btn.textContent = moving ? '⏸' : '▶';
+    };
+    document.body.appendChild(btn);
+  }
+  // 等地图瓦片加载完（complete 事件）再贴合视野并开始画轨迹；2.5s 兜底防止事件不触发
+  function onMapReady(){ fitToTrack(); startDraw(); }
+  map.on('complete', onMapReady);
+  setTimeout(onMapReady, 2500);
 }
 </script>
 </body>
