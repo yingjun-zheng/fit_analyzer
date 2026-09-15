@@ -1,6 +1,7 @@
 """主窗口：左侧月份-活动树 + 月度汇总 / 活动详情（原生桌面界面）。"""
 import logging
 import os
+import queue
 import random
 import re
 import sys
@@ -8,7 +9,7 @@ import threading
 import time
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThread, QTimer, Signal, Slot
+from PySide6.QtCore import Qt, QThread, Signal, Slot
 from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -38,7 +39,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from core import ai_analysis, ai_client, analysis, fit_parser, logging_setup, month_agent
+from core import ai_analysis, ai_client, analysis, fit_parser, logging_setup
 from core.config import Config
 from core.db import DB
 from gui import charts as ch
@@ -165,6 +166,12 @@ class MainWindow(QMainWindow):
 
     # ---------------- UI 构建 ----------------
     def _build_ui(self):
+        # 先建 AI 助手浮层（覆盖式，不参与布局）：菜单/工具栏开关需要引用它
+        from gui.ai_panel import AiAssistantPanel
+
+        self.ai_panel = AiAssistantPanel(self)
+        self.ai_panel.reposition()
+        self.ai_panel.show_panel()
         self._build_menus()
         self._build_toolbar()
 
@@ -187,7 +194,7 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.month_page)
         self.stack.addWidget(self.act_page)
 
-        # 左侧：训练记录树（AI 问答统一收进月度页「AI 训练助手」卡片）
+        # 左侧：训练记录树
         self.left_vsplit = QSplitter(Qt.Vertical)
         self.left_vsplit.addWidget(self.month_tree)
 
@@ -234,6 +241,10 @@ class MainWindow(QMainWindow):
         self._add_action(m_tools, "🔧 装备管家", self.open_gear, tip="消耗件台账与里程驱动的保养提醒")
         m_tools.addSeparator()
         self._add_action(m_tools, "🔄 刷新", self.load_months, "F5", "重新加载训练记录")
+        # AI 助手浮层开关（关闭后从这里或工具栏/Ctrl+B 找回）
+        m_tools.addSeparator()
+        self._add_action(m_tools, "🤖 AI 训练助手", self.toggle_ai_panel, "Ctrl+B",
+                         "显示 / 收起 AI 助手面板")
 
         m_help = mb.addMenu("帮助(&H)")
         self._add_action(m_help, "⚙️ 设置…", self.open_settings, tip="统计区间 / AI / 高德 Key / 年度目标 / 诊断日志")
@@ -251,6 +262,7 @@ class MainWindow(QMainWindow):
                 ("📁 批量导入", self.import_files, "批量导入 FIT 文件（也可直接拖拽 .fit 进窗口）"),
                 ("🗑 删除", self.delete_selected, "删除左侧选中的活动记录（可多选，快捷键 Del）"),
                 ("📤 导出 GPX", self.export_gpx, "把当前选中的活动导出为 GPX"),
+                ("🤖 AI 助手", self.toggle_ai_panel, "显示 / 收起 AI 助手面板（Ctrl+B）"),
                 None,
                 ("🧭 路径规划", self.open_plan, "高德地图点击选点，逐段规划骑行路线"),
                 ("✨ 自动规划", self.open_auto_plan, "一句话自动生成长途路书（分段接力 + 休息点）"),
@@ -355,12 +367,8 @@ class MainWindow(QMainWindow):
         head = QHBoxLayout()
         self.mv_title = QLabel("月度训练汇总")
         self.mv_title.setObjectName("h2")
-        self.mv_ai_btn = QPushButton("🤖 AI 月度总结")
-        self.mv_ai_btn.setObjectName("primary")
-        self.mv_ai_btn.clicked.connect(self.ai_month)
         head.addWidget(self.mv_title)
         head.addStretch(1)
-        head.addWidget(self.mv_ai_btn)
         lay.addLayout(head)
 
         # 年度里程目标（设置页配置，0=不启用）
@@ -443,39 +451,6 @@ class MainWindow(QMainWindow):
         self.mv_table.cellDoubleClicked.connect(self.on_mv_table_dbl)
         card.layout().addWidget(self.mv_table)
         lay.addWidget(card, 1)
-
-        # AI 训练助手：一键总结（右上角按钮）+ 自由提问，结果统一显示在此卡片
-        ai_card = self._card()
-        ai_head = QHBoxLayout()
-        ai_title = QLabel("🤖 AI 训练助手")
-        ai_title.setObjectName("h3")
-        ai_head.addWidget(ai_title)
-        ai_head.addStretch(1)
-        ai_hint = QLabel("针对当前选中月份 · 数据仅本机，提问时才调用 AI")
-        ai_hint.setObjectName("muted")
-        ai_head.addWidget(ai_hint)
-        ai_card.layout().addLayout(ai_head)
-
-        ai_in_row = QHBoxLayout()
-        self.mv_ai_input = QLineEdit()
-        self.mv_ai_input.setPlaceholderText(
-            "自由提问，例如：本月训练量如何？爬坡多吗？哪天骑得最快？（生成总结点右上角按钮）")
-        self.mv_ai_input.returnPressed.connect(self.mv_ai_ask)
-        self.mv_ai_ask_btn = QPushButton("提问")
-        self.mv_ai_ask_btn.setObjectName("primary")
-        self.mv_ai_ask_btn.clicked.connect(self.mv_ai_ask)
-        ai_in_row.addWidget(self.mv_ai_input, 1)
-        ai_in_row.addWidget(self.mv_ai_ask_btn)
-        ai_card.layout().addLayout(ai_in_row)
-
-        self.mv_ai_text = QTextEdit()
-        self.mv_ai_text.setReadOnly(True)
-        self.mv_ai_text.setPlaceholderText("点击右上角「AI 月度总结」一键生成，或在上方输入框自由提问。")
-        self.mv_ai_text.setMaximumHeight(260)
-        ai_card.layout().addWidget(self.mv_ai_text)
-        self.mv_ai_card = ai_card
-        self.mv_ai_card.setVisible(False)
-        lay.addWidget(ai_card)
 
         # 月度页整体放入滚动区，防止内容超出窗口时显示不全
         self.mv_page = page
@@ -616,6 +591,31 @@ class MainWindow(QMainWindow):
     def closeEvent(self, e):
         """关闭窗口即退出。"""
         QApplication.instance().quit()
+
+    # ---------------- AI 助手浮层（覆盖式，不挤压中央布局） ----------------
+    def toggle_ai_panel(self):
+        if hasattr(self, "ai_panel"):
+            self.ai_panel.toggle_panel()
+
+    def moveEvent(self, e):
+        super().moveEvent(e)
+        if hasattr(self, "ai_panel"):
+            self.ai_panel.reposition()
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        if hasattr(self, "ai_panel"):
+            self.ai_panel.reposition()
+
+    def changeEvent(self, e):
+        super().changeEvent(e)
+        # 主窗口最小化/最大化/还原时让浮层跟随
+        if e.type() == e.Type.WindowStateChange and hasattr(self, "ai_panel"):
+            self.ai_panel.reposition()
+            if self.isMinimized():
+                self.ai_panel.hide()
+            elif self.isVisible():
+                self.ai_panel.show_panel()
 
     # ---------------- 数据加载 ----------------
     def load_months(self):
@@ -778,7 +778,10 @@ class MainWindow(QMainWindow):
             return  # 同月份数据未变：跳过整页重建（防点击闪烁）
         self._shown_month = month
         self.mv_title.setText(f"{month} 训练汇总")
-        self.mv_ai_card.setVisible(False)
+        if hasattr(self, "ai_panel"):
+            if self._cur_month != month:
+                self.ai_panel.reset_session()  # 切换月份：会话上下文失效
+            self.ai_panel.set_scope(f"当前范围：{month}（AI 提问基于该月数据）")
         self.mv_page.setUpdatesEnabled(False)  # 重建期间暂停重绘，避免界面闪烁
         self._render_year_goal(month)
         self._render_heatmap()
@@ -1014,6 +1017,8 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentWidget(self.act_page)
         self.act_page.setWindowTitle("")  # noop
         self.statusBar().showMessage(f"活动：{act['name']}（{fmt_dt(act['start_time'])}）", 5000)
+        if hasattr(self, "ai_panel"):
+            self.ai_panel.set_scope(f"当前查看：{act['name']}（AI 助手按月份数据回答）")
 
         # 概览统计卡
         self._clear_layout(self.ov_stats)
@@ -1420,35 +1425,12 @@ class MainWindow(QMainWindow):
     def _do_ai_activity(self, act, zones):
         return ai_analysis.analyze_activity(act, zones, self._ai_client())
 
-    def ai_month(self):
-        if not self.config.get("ai_enabled"):
-            QMessageBox.information(self, "提示", "请先在「设置」中启用并配置 AI")
-            return
-        month = self.mv_title.text().split()[0]
-        m = next((x for x in self.db.months() if x["month"] == month), None)
-        if not m:
-            return
-        self.mv_ai_btn.setEnabled(False)
-        self.mv_ai_card.setVisible(True)
-        self.mv_ai_text.setPlainText("AI 分析中，请稍候…")
-        self._run_worker(self._do_ai_month, self._on_ai_month_done, m)
-
-    def _do_ai_month(self, m):
-        return ai_analysis.analyze_month(m, self._ai_client())
-
     def _on_ai_done(self, ok, payload):
         self.ai_run_btn.setEnabled(True)
         if ok:
             self.ai_text.setPlainText(_format_ai_result(payload))
         else:
             self.ai_text.setPlainText(f"错误：{payload}")
-
-    def _on_ai_month_done(self, ok, payload):
-        self.mv_ai_btn.setEnabled(True)
-        if ok:
-            self.mv_ai_text.setPlainText(_format_ai_result(payload))
-        else:
-            self.mv_ai_text.setPlainText(f"错误：{payload}")
 
     def ai_test(self):
         self.ai_test_btn.setEnabled(False)
@@ -1508,41 +1490,6 @@ class MainWindow(QMainWindow):
         lines.append("【结论】")
         lines.append(answer)
         self.rv_text.setPlainText("\n".join(lines))
-
-    # ---------------- AI 训练助手（月度页卡片：自由提问 + 工具调用 Agent） ----------------
-    def mv_ai_ask(self):
-        """月度页 AI 卡片：对当前选中月份自由提问（Agent 按需调用数据工具）。"""
-        if not self.config.get("ai_enabled"):
-            QMessageBox.information(self, "提示", "请先在「设置」中启用并配置 AI")
-            return
-        q = self.mv_ai_input.text().strip()
-        if not q:
-            return
-        month = self.mv_title.text().split()[0] if self.mv_title.text() else None
-        if not month or month == "暂无数据，请导入":
-            QMessageBox.information(self, "提示", "请先在左侧选择一个月份")
-            return
-        self.mv_ai_card.setVisible(True)
-        self.mv_ai_ask_btn.setEnabled(False)
-        self.mv_ai_text.setPlainText("AI 分析中，请稍候…（工具调用明细已写入日志，可在 设置 → 诊断与日志 查看）")
-        self._run_worker(self._do_ai_chat_month, self._on_ai_chat_done, month, q)
-
-    def _do_ai_chat_month(self, month, q):
-        return month_agent.run_month_query(
-            self._ai_client(), self.db, month, self.config, q, max_rounds=5)
-
-    def _on_ai_chat_done(self, ok, payload):
-        self.mv_ai_ask_btn.setEnabled(True)
-        if not ok:
-            self.mv_ai_text.setPlainText(f"错误：{payload}")
-            return
-        # 工具调用链路只提示次数（明细在日志），不再单独占一块面板
-        steps = payload.get("steps") or []
-        head = f"（已查询 {len(steps)} 次本月数据）\n\n" if steps else ""
-        thinking = (payload.get("thinking") or "").strip()
-        answer = payload.get("answer") or "（模型未返回内容）"
-        self.mv_ai_text.setPlainText(head + ((f"【思考】\n{thinking}\n\n" if thinking else "") + f"【回答】\n{answer}"))
-        self.mv_ai_input.clear()
 
     # ---------------- 后台任务 ----------------
     def _run_worker(self, fn, on_done, *args):

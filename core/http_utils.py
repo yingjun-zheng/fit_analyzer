@@ -63,6 +63,71 @@ def _ssl_contexts():
         yield ctx, None  # 回退尝试使用完整剩余超时
 
 
+def iter_sse_data(resp):
+    """从类文件对象逐行解析 SSE `data:` 行，yield JSON 对象；遇 [DONE] 停止。
+
+    兼容 bytes/str 行；坏行静默跳过（流式容错）。"""
+    for raw in resp:
+        line = raw.decode("utf-8", "replace") if isinstance(raw, (bytes, bytearray)) else str(raw)
+        line = line.strip()
+        if not line.startswith("data:"):
+            continue
+        payload = line[5:].strip()
+        if payload == "[DONE]":
+            return
+        if not payload:
+            continue
+        try:
+            yield json.loads(payload)
+        except Exception:
+            continue
+
+
+def http_json_stream(url, timeout=30, method="POST", payload=None, headers=None, on_data=None):
+    """POST 并按 SSE 流读取，每个 JSON 数据块回调 on_data(obj)。
+
+    与 http_json 相同的 SSL 降级策略与错误提示；[DONE] 后正常返回。
+    返回 True 表示流正常结束。"""
+    last_err = None
+    data = json.dumps(payload).encode("utf-8") if payload is not None else None
+    started = time.monotonic()
+    for ctx, budget in _ssl_contexts():
+        remain = max(5, timeout - (time.monotonic() - started))
+        if budget:
+            remain = min(remain, budget)
+        try:
+            req = urllib.request.Request(url, data=data, method=method)
+            req.add_header("User-Agent", "FitAnalyzer/1.0")
+            req.add_header("Accept", "text/event-stream")
+            if payload is not None:
+                req.add_header("Content-Type", "application/json")
+            if headers:
+                for k, v in headers.items():
+                    req.add_header(k, v)
+            with urllib.request.urlopen(req, timeout=remain, context=ctx) as resp:
+                for obj in iter_sse_data(resp):
+                    if on_data:
+                        on_data(obj)
+            return True
+        except urllib.error.HTTPError as e:
+            detail = ""
+            try:
+                detail = e.read().decode("utf-8", "replace")[:500]
+            except Exception:
+                pass
+            last_err = HTTPError(f"HTTP {e.code} {e.reason}: {detail}", code=e.code)
+            break
+        except Exception as e:
+            last_err = e
+    err = last_err or HTTPError("网络请求失败")
+    if _has_ssl_failure(err) and not _INSECURE_FALLBACK:
+        err = HTTPError(
+            f"{err}（提示：若处于代理/TLS 拦截网络，可在 设置→诊断与日志 勾选"
+            f"「HTTPS 证书校验失败时降级」后重试）"
+        )
+    raise err
+
+
 def http_json(url, timeout=30, method="GET", payload=None, headers=None):
     last_err = None
     data = None

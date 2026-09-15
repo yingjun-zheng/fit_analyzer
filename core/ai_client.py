@@ -78,27 +78,7 @@ class AIClient:
         try:
             status, obj = http_utils.http_json(url, timeout=timeout or self.timeout, method="POST", payload=payload, headers=self._headers())
         except http_utils.HTTPError as e:
-            msg = str(e)
-            hint = ""
-            code = getattr(e, "code", None)
-            # 结构化判断：HTTPError 携带状态码，比字符串匹配可靠
-            if code == 404:
-                # 模型名不存在：把服务器可用模型列出来方便用户自查
-                try:
-                    t = self.test()
-                    if t.get("ok") and t.get("models"):
-                        hint = f"。服务器上可用的模型：{'、'.join(t['models'])}（请在 设置→AI 中修改模型名称，或用 ollama pull <模型> 拉取）"
-                except Exception:
-                    pass
-            elif code == 429:
-                if "quota" in msg.lower():
-                    hint = ("。AI 服务配额已用完（免费额度耗尽或余额不足）：请前往服务商控制台充值，"
-                            "或在 设置→AI 改用本地免费模型（如 Ollama / LM Studio）")
-                else:
-                    hint = "。请求过于频繁（限流），请稍等片刻再试"
-            elif code in (401, 403):
-                hint = "。认证失败：请检查 API Key 是否正确（设置→AI）"
-            raise AIError(f"AI 服务请求失败: {msg}{hint}")
+            raise AIError(self._http_error_hint(e))
         if status != 200:
             msg = obj.get("error", {}).get("message") if isinstance(obj, dict) else ""
             raise AIError(f"AI 服务返回状态 {status}: {msg}")
@@ -128,6 +108,130 @@ class AIClient:
                 "arguments": args,
             })
         log.info("AI 响应成功 耗时=%.1fs 内容=%d 思考=%d 工具调用=%d", time.time() - t0, len(content), len(reasoning), len(tool_calls))
+        return {"content": content, "reasoning": reasoning, "tool_calls": tool_calls}
+
+    def _http_error_hint(self, e):
+        """把 HTTPError 转成带中文操作提示的消息（chat_full / chat_full_stream 共用）。"""
+        msg = str(e)
+        hint = ""
+        code = getattr(e, "code", None)
+        # 结构化判断：HTTPError 携带状态码，比字符串匹配可靠
+        if code == 404:
+            # 模型名不存在：把服务器可用模型列出来方便用户自查
+            try:
+                t = self.test()
+                if t.get("ok") and t.get("models"):
+                    hint = f"。服务器上可用的模型：{'、'.join(t['models'])}（请在 设置→AI 中修改模型名称，或用 ollama pull <模型> 拉取）"
+            except Exception:
+                pass
+        elif code == 429:
+            if "quota" in msg.lower():
+                hint = ("。AI 服务配额已用完（免费额度耗尽或余额不足）：请前往服务商控制台充值，"
+                        "或在 设置→AI 改用本地免费模型（如 Ollama / LM Studio）")
+            else:
+                hint = "。请求过于频繁（限流），请稍等片刻再试"
+        elif code in (401, 403):
+            hint = "。认证失败：请检查 API Key 是否正确（设置→AI）"
+        return f"AI 服务请求失败: {msg}{hint}"
+
+    def _build_chat_payload(self, messages, model=None, temperature=None, tools=None,
+                            max_tokens=None, reasoning_effort=None, stream=False):
+        """构造 chat/completions 请求体（chat_full / chat_full_stream 共用）。"""
+        payload = {
+            "model": model or self.model,
+            "messages": messages,
+            "temperature": self.temperature if temperature is None else temperature,
+            "stream": stream,
+            "max_tokens": max_tokens if max_tokens is not None else 4096,
+        }
+        eff = reasoning_effort or self.reasoning_effort
+        if eff:
+            payload["reasoning_effort"] = eff
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
+        return payload
+
+    @staticmethod
+    def _consume_stream_obj(obj, emit, content_parts, reasoning_parts, tc_acc):
+        """消费一个流式 chunk：拼接 content/reasoning 增量与 tool_calls 分片。"""
+        if not isinstance(obj, dict):
+            return
+        choices = obj.get("choices") or []
+        if not choices:
+            return
+        delta = choices[0].get("delta") or {}
+        rc = delta.get("reasoning_content") or delta.get("reasoning")
+        if rc:
+            reasoning_parts.append(rc)
+            emit("thinking_delta", rc)
+        c = delta.get("content")
+        if c:
+            content_parts.append(c)
+            emit("delta", c)
+        for tc in (delta.get("tool_calls") or []):
+            idx = tc.get("index", 0)
+            acc = tc_acc.setdefault(idx, {"id": "", "name": "", "arguments": ""})
+            if tc.get("id"):
+                acc["id"] = tc["id"]
+            fn = tc.get("function") or {}
+            if fn.get("name"):
+                acc["name"] += fn["name"]
+            if fn.get("arguments"):
+                acc["arguments"] += fn["arguments"]
+
+    def chat_full_stream(self, messages, model=None, temperature=None, timeout=None,
+                         tools=None, max_tokens=None, reasoning_effort=None, on_event=None):
+        """流式版 chat_full：SSE 逐字回调 on_event(kind, text)。
+
+        kind: "delta"（回答增量）| "thinking_delta"（思考增量）。
+        返回结构与 chat_full 完全相同（content/reasoning/tool_calls），
+        ReAct 循环无需感知流式与否。"""
+        if not self.base_url:
+            raise AIError("未配置 AI 服务地址（设置 → AI）")
+        url = f"{self.base_url}/chat/completions"
+        payload = self._build_chat_payload(messages, model=model, temperature=temperature,
+                                           tools=tools, max_tokens=max_tokens,
+                                           reasoning_effort=reasoning_effort, stream=True)
+        log.info("AI 流式请求 -> %s model=%s messages=%d tools=%s",
+                 self.base_url, payload["model"], len(messages), bool(tools))
+        t0 = time.time()
+
+        def emit(kind, text):
+            if on_event and text:
+                try:
+                    on_event(kind, text)
+                except Exception:
+                    log.debug("流式回调异常", exc_info=True)
+
+        content_parts, reasoning_parts = [], []
+        tc_acc = {}
+        try:
+            http_utils.http_json_stream(
+                url, timeout=timeout or self.timeout, method="POST",
+                payload=payload, headers=self._headers(),
+                on_data=lambda obj: self._consume_stream_obj(
+                    obj, emit, content_parts, reasoning_parts, tc_acc))
+        except http_utils.HTTPError as e:
+            raise AIError(self._http_error_hint(e))
+        tool_calls = []
+        for idx in sorted(tc_acc):
+            acc = tc_acc[idx]
+            if not acc["name"]:
+                continue
+            args_raw = acc["arguments"]
+            if isinstance(args_raw, str):
+                try:
+                    args = json.loads(args_raw) if args_raw.strip() else {}
+                except Exception:
+                    args = {"_raw": args_raw}
+            else:
+                args = args_raw or {}
+            tool_calls.append({"id": acc["id"] or f"call_{idx}", "name": acc["name"], "arguments": args})
+        content = "".join(content_parts)
+        reasoning = "".join(reasoning_parts)
+        log.info("AI 流式响应完成 耗时=%.1fs 内容=%d 思考=%d 工具调用=%d",
+                 time.time() - t0, len(content), len(reasoning), len(tool_calls))
         return {"content": content, "reasoning": reasoning, "tool_calls": tool_calls}
 
     def test(self):
