@@ -44,102 +44,77 @@ _HTML_TPL = """<!DOCTYPE html>
 <meta charset="utf-8" />
 <script>window._AMapSecurityConfig = { securityJsCode: '__SECURITY__' };</script>
 <script src="https://webapi.amap.com/loader.js"></script>
-<style>html,body{margin:0;height:100%;background:#0f1115}#map{height:100%}
-.fly-btn{position:fixed;top:10px;right:10px;z-index:200;background:rgba(15,17,21,.78);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px;padding:6px 12px;font-size:13px;cursor:pointer;user-select:none}
-.fly-btn:hover{background:rgba(30,136,229,.85);border-color:#1e88e5}
-.fly-btn.active{background:#1e88e5;border-color:#1e88e5}
-</style>
+<style>html,body{margin:0;height:100%;background:#0f1115}#map{height:100%}</style>
 </head>
 <body>
 <div id="map"></div>
-<button class="fly-btn" id="flyBtn" style="display:none">&#9654; 飞行视角</button>
 <script>
 __WGS__
 var PTS = __DATA__;
+var map = null;
+function fail(msg){
+  document.body.innerHTML = '<div style="color:#ff9a9a;padding:14px;line-height:1.9">地图加载失败：' + msg +
+    '<br><a href="javascript:location.reload()" style="color:#7ab8ff">点击重试</a></div>';
+}
+function loadMap(attempt){
+  AMapLoader.load({ key: '__KEY__', version: '2.0' }).then(initTrackMap).catch(function(err){
+    var m = (err && err.message) || err;
+    if(attempt < 3){ setTimeout(function(){ loadMap(attempt + 1); }, 800 * attempt); }
+    else { fail(m + '（已自动重试）'); }
+  });
+}
 function renderTrack(){
-  AMapLoader.load({ key: '__KEY__', version: '2.0' }).then(function(){
-    var map = new AMap.Map('map', { viewMode: '3D', zoom: 13 });  // 3D 模式：支持 pitch/rotation，供飞行视角使用（pitch=0 时与 2D 观感一致）
-    var path = PTS.map(function(p){ var g = wgs84ToGcj02(p.lon, p.lat); return [g[0], g[1]]; });
-    if(!path.length){ document.body.innerHTML = '<div style="color:#ff9a9a;padding:14px">该活动无 GPS 轨迹</div>'; return; }
-    // 隐藏的完整路径仅用于 fitView：动画期间视角固定，避免边画边缩放
-    var full = new AMap.Polyline({ path: path, strokeOpacity: 0, strokeWeight: 5 });
-    map.add(full);
-    map.setFitView([full], false, [40,40,40,40]);
-    // 起点→终点 渐进绘制动画
-    var line = new AMap.Polyline({ path: [path[0]], strokeColor: '#1e88e5', strokeWeight: 5, strokeOpacity: 0.95, showDir: true, lineJoin: 'round', lineCap: 'round' });
-    map.add(line);
-    map.add(new AMap.Marker({ position: path[0], content: '<div style=\\"width:14px;height:14px;border-radius:50%;background:#22c55e;border:2px solid #fff;box-shadow:0 0 0 2px rgba(34,197,94,.4)\\"></div>', offset: new AMap.Pixel(-7,-7) }));
-    var head = new AMap.Marker({ position: path[0], content: '<div style=\\"width:12px;height:12px;border-radius:50%;background:#1e88e5;border:2px solid #fff;box-shadow:0 0 6px rgba(30,136,229,.8)\\"></div>', offset: new AMap.Pixel(-6,-6), zIndex: 120 });
-    map.add(head);
-    var endMarker = new AMap.Marker({ position: path[path.length - 1], content: '<div style=\\"width:14px;height:14px;border-radius:50%;background:#ef4444;border:2px solid #fff;box-shadow:0 0 0 2px rgba(239,68,68,.4)\\"></div>', offset: new AMap.Pixel(-7,-7) });
-    // 限制 setPath 调用次数（大轨迹按 stride 量化），保证动画流畅
-    var stride = Math.max(1, Math.ceil(path.length / 240));
-    var DUR = Math.max(900, Math.min(2600, path.length * 4));
-    var t0 = null;
-    function step(ts){
-      if(t0 === null) t0 = ts;
-      var t = Math.min(1, (ts - t0) / DUR);
-      var e = 1 - (1 - t) * (1 - t); // easeOutQuad
-      var idx = Math.floor(e * (path.length - 1) / stride) * stride;
-      if(t >= 1) idx = path.length - 1;
-      line.setPath(path.slice(0, idx + 1));
-      head.setPosition(path[idx]);
-      if(t < 1){ requestAnimationFrame(step); }
-      else { map.remove(head); map.add(endMarker); flyBtn.style.display = 'block'; }
-    }
-    requestAnimationFrame(step);
-    // ── 飞行视角（flyover）：相机沿轨迹飞行，卫星图 + 55° 俯仰 + 朝向随航向 ──
-    var flyBtn = document.getElementById('flyBtn');
-    var flying = false, flyRaf = null, satLayer = null, flyStartTs = 0;
-    function stopFly(restore){
-      flying = false;
-      if(flyRaf){ cancelAnimationFrame(flyRaf); flyRaf = null; }
-      flyBtn.classList.remove('active');
-      flyBtn.innerHTML = '&#9654; 飞行视角';
-      if(restore){
-        if(satLayer){ map.remove(satLayer); satLayer = null; }
-        map.setPitch(0);
-        map.setRotation(0);
-        map.setFitView([line], false, [40,40,40,40]);
-      }
-    }
-    function startFly(){
-      if(path.length < 2) return;
-      flying = true;
-      flyBtn.classList.add('active');
-      flyBtn.innerHTML = '&#9632; 退出飞行';
-      if(!satLayer){ satLayer = new AMap.TileLayer.Satellite(); map.add(satLayer); }
-      flyStartTs = Date.now();  // 启动保护窗：忽略 setZoom/setPitch 自身触发的事件，防止飞行刚启动就被取消
-      map.setZoom(17);
-      map.setPitch(55);
-      var DUR = Math.max(12000, Math.min(45000, path.length * 10));
-      var t0 = null;
-      function step(ts){
-        if(!flying) return;
-        if(t0 === null) t0 = ts;
-        var t = Math.min(1, (ts - t0) / DUR);
-        var i = Math.floor(t * (path.length - 1));
-        var cur = path[i];
-        var look = path[Math.min(path.length - 1, i + 8)];  // 前视点：相机看向飞行方向前方
-        map.setCenter(look);
-        var dLon = (look[0] - cur[0]) * Math.cos(cur[1] * Math.PI / 180);
-        var dLat = look[1] - cur[1];
-        if(Math.abs(dLon) > 1e-9 || Math.abs(dLat) > 1e-9){
-          map.setRotation((Math.atan2(dLon, dLat) * 180 / Math.PI + 360) % 360);
-        }
-        if(t < 1){ flyRaf = requestAnimationFrame(step); }
-        else { stopFly(true); }
-      }
-      flyRaf = requestAnimationFrame(step);
-    }
-    flyBtn.onclick = function(){ flying ? stopFly(true) : startFly(); };
-    // 用户手动拖动/缩放/旋转时自动退出飞行，避免相机与手势打架
-    ['dragstart','zoomstart','rotatestart','pitchstart'].forEach(function(ev){
-      map.on(ev, function(){ if(flying && Date.now() - flyStartTs > 500) stopFly(true); });
-    });
-  }).catch(function(err){ document.body.innerHTML = '<div style="color:#ff9a9a;padding:14px">地图加载失败：' + ((err && err.message) || err) + '</div>'; });
+  // 首次加载健壮性：loader.js 可能因网络抖动晚到 → 轮询等待；
+  // AMapLoader.load 失败（网络抖动/配额）→ 自动重试 2 次，仍失败给出「点击重试」
+  var n = 0;
+  (function wait(){
+    if(window.AMapLoader){ loadMap(1); return; }
+    if(++n > 40){ fail('加载高德脚本超时（请检查网络后重试）'); return; }
+    setTimeout(wait, 200);
+  })();
 }
 if(window.AMapLoader){ renderTrack(); } else { window.addEventListener('load', renderTrack); }
+
+function initTrackMap(){
+  map = new AMap.Map('map', { viewMode: '2D', zoom: 13 });
+  var path = PTS.map(function(p){ var g = wgs84ToGcj02(p.lon, p.lat); return [g[0], g[1]]; });
+  if(!path.length){ document.body.innerHTML = '<div style="color:#ff9a9a;padding:14px">该活动无 GPS 轨迹</div>'; return; }
+  // 隐藏的完整路径仅用于 fitView：动画期间视角固定，避免边画边缩放
+  var full = new AMap.Polyline({ path: path, strokeOpacity: 0, strokeWeight: 5 });
+  map.add(full);
+  map.setFitView([full], false, [40,40,40,40]);
+  // 起点→终点 渐进绘制动画
+  var line = new AMap.Polyline({ path: [path[0]], strokeColor: '#1e88e5', strokeWeight: 5, strokeOpacity: 0.95, showDir: true, lineJoin: 'round', lineCap: 'round' });
+  map.add(line);
+  map.add(new AMap.Marker({ position: path[0], content: '<div style=\\"width:14px;height:14px;border-radius:50%;background:#22c55e;border:2px solid #fff;box-shadow:0 0 0 2px rgba(34,197,94,.4)\\"></div>', offset: new AMap.Pixel(-7,-7) }));
+  var head = new AMap.Marker({ position: path[0], content: '<div style=\\"width:12px;height:12px;border-radius:50%;background:#1e88e5;border:2px solid #fff;box-shadow:0 0 6px rgba(30,136,229,.8)\\"></div>', offset: new AMap.Pixel(-6,-6), zIndex: 120 });
+  map.add(head);
+  var endMarker = new AMap.Marker({ position: path[path.length - 1], content: '<div style=\\"width:14px;height:14px;border-radius:50%;background:#ef4444;border:2px solid #fff;box-shadow:0 0 0 2px rgba(239,68,68,.4)\\"></div>', offset: new AMap.Pixel(-7,-7) });
+  // 限制 setPath 调用次数（大轨迹按 stride 量化），保证动画流畅
+  var stride = Math.max(1, Math.ceil(path.length / 240));
+  var DUR = Math.max(2000, Math.min(8000, path.length * 10));  // 放慢节奏，避免瓦片未加载完轨迹就画完
+  var t0 = null;
+  var drawStarted = false;
+  function startDraw(){
+    if(drawStarted) return;
+    drawStarted = true;
+    requestAnimationFrame(step);
+  }
+  function step(ts){
+    if(t0 === null) t0 = ts;
+    var t = Math.min(1, (ts - t0) / DUR);
+    var e = 1 - (1 - t) * (1 - t); // easeOutQuad
+    var idx = Math.floor(e * (path.length - 1) / stride) * stride;
+    if(t >= 1) idx = path.length - 1;
+    line.setPath(path.slice(0, idx + 1));
+    head.setPosition(path[idx]);
+    if(t < 1){ requestAnimationFrame(step); }
+    else { map.remove(head); map.add(endMarker); }
+  }
+  // 等地图瓦片加载完（complete 事件）再开始画轨迹；2.5s 兜底防止事件不触发
+  map.on('complete', startDraw);
+  setTimeout(startDraw, 2500);
+}
 </script>
 </body>
 </html>"""
