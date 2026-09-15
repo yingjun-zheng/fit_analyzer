@@ -80,8 +80,9 @@ class AIClient:
         except http_utils.HTTPError as e:
             msg = str(e)
             hint = ""
+            code = getattr(e, "code", None)
             # 结构化判断：HTTPError 携带状态码，比字符串匹配可靠
-            if getattr(e, "code", None) == 404:
+            if code == 404:
                 # 模型名不存在：把服务器可用模型列出来方便用户自查
                 try:
                     t = self.test()
@@ -89,6 +90,14 @@ class AIClient:
                         hint = f"。服务器上可用的模型：{'、'.join(t['models'])}（请在 设置→AI 中修改模型名称，或用 ollama pull <模型> 拉取）"
                 except Exception:
                     pass
+            elif code == 429:
+                if "quota" in msg.lower():
+                    hint = ("。AI 服务配额已用完（免费额度耗尽或余额不足）：请前往服务商控制台充值，"
+                            "或在 设置→AI 改用本地免费模型（如 Ollama / LM Studio）")
+                else:
+                    hint = "。请求过于频繁（限流），请稍等片刻再试"
+            elif code in (401, 403):
+                hint = "。认证失败：请检查 API Key 是否正确（设置→AI）"
             raise AIError(f"AI 服务请求失败: {msg}{hint}")
         if status != 200:
             msg = obj.get("error", {}).get("message") if isinstance(obj, dict) else ""
