@@ -32,7 +32,7 @@ AGENT_SYSTEM = """你是骑行训练分析助手，通过调用工具来回答�
    compare_activities 查两次活动对比（「进步了没」）、get_fitness_summary 查体能指标
    （心速比/心率漂移/踏频质量）、get_gear_status 查装备台账（「装备要换了吗」）。
    复合问题（如「对比这周和上周，然后看看我该不该休息」）可连续调用多个工具。
-9. 写操作（set_ftp / set_year_goal / add_gear）会先弹出确认框征求用户同意：
+9. 写操作（set_ftp / set_year_goal / add_gear / set_commute）会先弹出确认框征求用户同意：
    调用前先用一句话说明打算做什么（如「我来帮你把 FTP 设为 250W，请确认」），
    工具返回「已执行/用户取消」后再基于结果作答，不要假装已经修改。"""
 
@@ -42,6 +42,7 @@ MAX_HISTORY_ROUNDS = 8
 TOOL_RESULT_MAX_CHARS = 6000
 
 _MONTH_ARG_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
+_DATE_ARG_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 # 每个工具共有的可选 month 参数（跨月追问）
 _MONTH_PARAM = {
@@ -228,6 +229,21 @@ MONTH_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "set_commute",
+            "description": "把某天的骑行动作标记为「通勤」或取消标记（用于区分通勤里程与训练里程）。写操作：会弹出确认框。同一天多次骑行时标记最近一次。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "date": {"type": "string", "description": "骑行日期 YYYY-MM-DD"},
+                    "flag": {"type": "boolean", "description": "true=标记为通勤，false=取消标记，默认 true"},
+                },
+                "required": ["date"],
+            },
+        },
+    },
 ]
 
 
@@ -246,6 +262,9 @@ def _month_overview(db, month):
     total_cal = sum(r.get("calories") or 0 for r in rows)
     speeds = [r.get("avg_speed_ms") for r in rows if r.get("avg_speed_ms")]
     weighted_speed = (sum((r.get("avg_speed_ms") or 0) * (r.get("total_distance_m") or 0) for r in rows) / total_dist * 3.6) if total_dist else None
+    # 通勤/训练口径：通勤按 commute 标记拆分（P1-B）
+    commute_dist = sum(r.get("total_distance_m") or 0 for r in rows if r.get("commute"))
+    commute_cnt = sum(1 for r in rows if r.get("commute"))
     return {
         "month": month,
         "count": len(rows),
@@ -255,6 +274,8 @@ def _month_overview(db, month):
         "calories": round(total_cal),
         "avg_speed_kmh": round(_safe_avg([s * 3.6 for s in speeds]), 1) if speeds else None,
         "weighted_avg_speed_kmh": round(weighted_speed, 1) if weighted_speed else None,
+        "commute": {"count": commute_cnt, "distance_km": round(commute_dist / 1000, 1)},
+        "training_distance_km": round((total_dist - commute_dist) / 1000, 1),
     }
 
 
@@ -280,6 +301,7 @@ def _month_activities(db, month, limit=None):
             "calories": round(r.get("calories") or 0),
             "has_hr": bool(r.get("avg_hr")),
             "has_cad": bool(r.get("avg_cad")),
+            "commute": bool(r.get("commute")),
         })
     res = {"count": len(rows), "shown": len(out), "activities": out}
     if capped:
@@ -490,6 +512,22 @@ def _exec_action(name, args, ctx):
             "description": f"添加装备「{gname}」（类型：{gtype}，预期寿命 {exp} km）",
             "apply": lambda: db.gear_add(gname, gtype, today, ts, 0, exp),
         }
+    elif name == "set_commute":
+        date = (args.get("date") or "").strip()
+        flag = bool(args.get("flag", True))
+        if not _DATE_ARG_RE.match(date):
+            return {"error": "日期格式需为 YYYY-MM-DD"}
+        rows = [r for r in db.list_activities(month=date[:7])
+                if (r.get("start_time") or "")[:10] == date]
+        if not rows:
+            return {"error": f"{date} 没有骑行记录"}
+        act = rows[0]  # 同日多次取最近一次（list_activities 按 start_ts 倒序）
+        action = {
+            "type": "set_commute",
+            "description": f"把 {date} 的骑行《{act.get('name')}》"
+                           f"（{act.get('distance_km')}km）标记为{'通勤' if flag else '训练'}",
+            "apply": lambda: db.set_commute(act["id"], flag),
+        }
     else:
         return {"error": f"未知操作: {name}"}
     on_action = ctx.get("on_action")
@@ -535,7 +573,7 @@ def _dispatch(name, args, ctx):
         return _tool_fitness(db, args.get("date"), ctx["config"])
     if name == "get_gear_status":
         return _tool_gear(db, args.get("level"))
-    if name in ("set_ftp", "set_year_goal", "add_gear"):
+    if name in ("set_ftp", "set_year_goal", "add_gear", "set_commute"):
         return _exec_action(name, args, ctx)
     return {"error": f"未知工具: {name}"}
 
@@ -583,7 +621,7 @@ def run_month_query(ai, db, month, config, question, max_rounds=5, history=None,
               ("tool", name, args)              开始调用工具
               ("tool_result", name, ok)         工具执行完成
     on_action: 可选回调 on_action(action) -> bool。Action 工具（set_ftp /
-               set_year_goal / add_gear）先调它征求用户确认；返回 True 才执行。
+               set_year_goal / add_gear / set_commute）先调它征求用户确认；返回 True 才执行。
                不传则所有写操作被拒绝（安全默认）。
     返回 {"answer", "thinking", "steps":[{tool,args,ok}], "fallback", "history"}，
     history 为包含本轮问答的完整会话历史。

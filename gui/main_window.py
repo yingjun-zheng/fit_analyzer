@@ -569,8 +569,8 @@ class MainWindow(QMainWindow):
 
         card = self._card()
         card.layout().addWidget(QLabel("本月活动列表"))
-        self.mv_table = QTableWidget(0, 7)
-        self.mv_table.setHorizontalHeaderLabels(["日期", "名称", "距离", "用时", "均速", "爬升", "卡路里"])
+        self.mv_table = QTableWidget(0, 8)
+        self.mv_table.setHorizontalHeaderLabels(["日期", "名称", "距离", "用时", "均速", "爬升", "卡路里", "类型"])
         self.mv_table.verticalHeader().setVisible(False)  # 隐藏行号表头（避免深色竖带）
         self.mv_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.mv_table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -857,8 +857,9 @@ class MainWindow(QMainWindow):
             self.month_tree.addTopLevelItem(top)
             self._month_items[m["month"]] = top
             for a in self.db.list_activities(month=m["month"]):
+                badge = "🚴通勤 · " if a.get("commute") else ""
                 child = QTreeWidgetItem([
-                    f"{fmt_dt(a['start_time'])}  {a['name']}  {fmt_km(a['distance_km'])}  {fmt_duration(a['timer_s'])}"])
+                    f"{fmt_dt(a['start_time'])}  {badge}{a['name']}  {fmt_km(a['distance_km'])}  {fmt_duration(a['timer_s'])}"])
                 child.setData(0, Qt.UserRole, (ACTIVITY, a["id"]))
                 top.addChild(child)
         if months:
@@ -947,9 +948,12 @@ class MainWindow(QMainWindow):
         menu = QMenu(self)
         act_one = None
         act_month = None
+        act_commute = None
         kind0, data0 = item.data(0, Qt.UserRole)
         if kind0 == ACTIVITY:
             act_one = menu.addAction("删除此记录")
+            is_c = bool(self.db.get_activity(data0).get("commute"))
+            act_commute = menu.addAction("取消通勤标记" if is_c else "🚴 标记为通勤")
         elif kind0 == MONTH:
             act_month = menu.addAction(f"🗑 删除整月数据…（{data0}）")
         sel_ids = self._selected_activity_ids()
@@ -961,6 +965,8 @@ class MainWindow(QMainWindow):
         chosen = menu.exec(self.month_tree.viewport().mapToGlobal(pos))
         if chosen is act_one:
             self._delete_ids([item.data(0, Qt.UserRole)[1]], "确定删除这条记录？")
+        elif chosen is act_commute:
+            self._toggle_commute(data0, not self.db.get_activity(data0).get("commute"))
         elif chosen is act_month:
             self._delete_months([data0])
         elif chosen is act_sel:
@@ -969,6 +975,18 @@ class MainWindow(QMainWindow):
             all_ids = [a["id"] for a in self.db.list_activities(limit=100000)]
             if all_ids:
                 self._delete_ids(all_ids, f"确定清空全部 {len(all_ids)} 条记录？此操作不可恢复！")
+
+    def _toggle_commute(self, aid, flag):
+        """标记/取消通勤（右键菜单），刷新列表与活动页。"""
+        self.db.set_commute(aid, flag)
+        cur_aid = self._shown_activity_id
+        cur_month = self._cur_month
+        self.load_months()  # 重建列表（内部会回到首月）
+        if cur_month:
+            self.show_month(cur_month, force=True)  # 回到原来查看的月份
+        if cur_aid and self.db.get_activity(cur_aid):
+            self.show_activity(cur_aid, force=True)  # 活动页在看的也刷新
+        self.statusBar().showMessage("已更新通勤标记", 3000)
 
     def _delete_ids(self, ids, question):
         if not ids:
@@ -998,6 +1016,7 @@ class MainWindow(QMainWindow):
 
     # ---------------- 月度页 ----------------
     def show_month(self, month, force=False):
+        prev_month = self._cur_month
         self.stack.setCurrentWidget(self.month_page)
         self._cur_month = month
         if not force and self._shown_month == month:
@@ -1005,8 +1024,9 @@ class MainWindow(QMainWindow):
         self._shown_month = month
         self.mv_title.setText(f"{month} 训练汇总")
         if hasattr(self, "ai_panel"):
-            if self._cur_month != month:
+            if prev_month != month:
                 self.ai_panel.reset_session()  # 切换月份：会话上下文失效
+            self.ai_panel.clear_activity()  # 列表已重建，活动关联一并清除
             self.ai_panel.set_scope(f"当前范围：{month}（AI 提问基于该月数据）")
         self.mv_page.setUpdatesEnabled(False)  # 重建期间暂停重绘，避免界面闪烁
         self._render_year_goal(month)
@@ -1024,6 +1044,11 @@ class MainWindow(QMainWindow):
             ("总消耗", f"{round(m['calories'] or 0)} kcal"),
             ("平均速度", f"{m['avg_speed_kmh']} km/h"),
         ]
+        # 通勤口径（P1-B）：有通勤标记时额外显示拆分卡
+        commute_acts = [a for a in acts if a.get("commute")]
+        if commute_acts:
+            commute_km = sum(a.get("distance_km") or 0 for a in commute_acts)
+            values.append(("其中通勤", f"{fmt_km(round(commute_km, 1))}（{len(commute_acts)} 次）"))
         self._clear_layout(self.mv_stats)
         for i, (k, v) in enumerate(values):
             self.mv_stats.addWidget(self._stat_card(k, v), i // 3, i % 3)
@@ -1051,6 +1076,7 @@ class MainWindow(QMainWindow):
                 a["avg_speed_kmh"] if a["avg_speed_kmh"] is not None else "—",
                 f"{round(a['ascent_m'] or 0)} m" if a["ascent_m"] is not None else "—",
                 f"{round(a['calories'] or 0)} kcal" if a["calories"] is not None else "—",
+                "🚴 通勤" if a.get("commute") else "训练",
             ]
             for c, v in enumerate(vals):
                 item = QTableWidgetItem(str(v))
@@ -1194,6 +1220,7 @@ class MainWindow(QMainWindow):
     def stat_values(self, a):
         return [
             ("记录时间", fmt_dt(a.get("start_time"))),
+            ("骑行类型", "🚴 通勤" if a.get("commute") else "训练"),
             ("平均速度", kmh(a.get("avg_speed_ms"))),
             ("卡路里", f"{round(a['calories'])} kcal" if a.get("calories") is not None else "—"),
             ("最大速度", kmh(a.get("max_speed_ms"))),
@@ -1244,7 +1271,7 @@ class MainWindow(QMainWindow):
         self.act_page.setWindowTitle("")  # noop
         self.statusBar().showMessage(f"活动：{act['name']}（{fmt_dt(act['start_time'])}）", 5000)
         if hasattr(self, "ai_panel"):
-            self.ai_panel.set_scope(f"当前查看：{act['name']}（AI 助手按月份数据回答）")
+            self.ai_panel.set_activity(act)  # P1-A：AI 面板锚定当前活动
 
         # 概览统计卡
         self._clear_layout(self.ov_stats)

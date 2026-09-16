@@ -40,7 +40,8 @@ CREATE TABLE IF NOT EXISTS activities (
     lat REAL, lon REAL,
     record_count INTEGER,
     imported_at TEXT,
-    tss REAL, tss_method TEXT, tss_sig TEXT
+    tss REAL, tss_method TEXT, tss_sig TEXT,
+    commute INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_act_start ON activities(start_ts);
 CREATE INDEX IF NOT EXISTS idx_act_month ON activities(start_time);
@@ -135,6 +136,7 @@ class DB:
             "tss_method": "TEXT",
             "tss_sig": "TEXT",
             "month": "TEXT",
+            "commute": "INTEGER DEFAULT 0",
         }
         for col, typ in adds.items():
             if col not in cols:
@@ -345,6 +347,14 @@ class DB:
     def gear_delete(self, gid):
         self.conn.execute("DELETE FROM gear WHERE id=?", (gid,))
         self.conn.commit()
+
+    @_locked
+    def set_commute(self, aid, flag):
+        """标记/取消通勤骑行。"""
+        self.conn.execute(
+            "UPDATE activities SET commute=? WHERE id=?", (1 if flag else 0, aid))
+        self.conn.commit()
+        log.info("活动 %s 通勤标记 -> %s", aid, bool(flag))
 
     @_locked
     def delete_month(self, month):

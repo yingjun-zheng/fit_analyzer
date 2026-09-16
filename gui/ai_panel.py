@@ -75,6 +75,7 @@ class AiAssistantPanel(QWidget):
 
         # ---- 会话状态（面板常驻，页面切换不丢失）----
         self.history = []              # user/assistant 精华对
+        self._activity = None          # 当前关联的活动（P1-A：选中活动时由主窗口注入）
         self._events = queue.Queue()   # worker → 主线程 流式事件
         self._confirm_queue = queue.Queue()
         self._confirm_showing = False
@@ -110,15 +111,37 @@ class AiAssistantPanel(QWidget):
         self.scope.setObjectName("muted")
         lay.addWidget(self.scope)
 
+        # 关联活动上下文条（选中活动时显示，可一键清除）
+        self.ctx_bar = QWidget()
+        ctx_lay = QHBoxLayout(self.ctx_bar)
+        ctx_lay.setContentsMargins(0, 0, 0, 0)
+        ctx_lay.setSpacing(4)
+        self.ctx_label = QLabel("")
+        self.ctx_label.setObjectName("muted")
+        self.ctx_label.setWordWrap(True)
+        self.btn_clear_ctx = QPushButton("✕")
+        self.btn_clear_ctx.setFixedWidth(24)
+        self.btn_clear_ctx.setToolTip("清除活动关联，回到按月份回答")
+        self.btn_clear_ctx.clicked.connect(self.clear_activity)
+        ctx_lay.addWidget(self.ctx_label, 1)
+        ctx_lay.addWidget(self.btn_clear_ctx)
+        self.ctx_bar.setVisible(False)
+        lay.addWidget(self.ctx_bar)
+
         # 输入行：总结本月 + 提问 + 新对话
         row1 = QHBoxLayout()
         self.btn_summary = QPushButton("📝 总结本月")
         self.btn_summary.setToolTip("一键生成当前月份的 AI 训练总结")
         self.btn_summary.clicked.connect(self.ask_summary)
+        self.btn_review = QPushButton("🚴 复盘本次骑行")
+        self.btn_review.setToolTip("针对当前关联活动做单次复盘（功率/心率/踏频分区点评）")
+        self.btn_review.clicked.connect(self.ask_review)
+        self.btn_review.setVisible(False)
         self.btn_new = QPushButton("🆕")
         self.btn_new.setToolTip("新对话（切换月份也会自动重置）")
         self.btn_new.clicked.connect(self.new_session)
         row1.addWidget(self.btn_summary)
+        row1.addWidget(self.btn_review)
         row1.addWidget(self.btn_new)
         row1.addStretch(1)
         lay.addLayout(row1)
@@ -146,6 +169,54 @@ class AiAssistantPanel(QWidget):
     # ---------------- 对外接口（主窗口调用） ----------------
     def set_scope(self, text):
         self.scope.setText(text)
+
+    # ---------------- 活动上下文（P1-A） ----------------
+    @staticmethod
+    def _activity_month(act):
+        return act.get("month") or (act.get("start_time") or "")[:7] or None
+
+    def set_activity(self, act):
+        """主窗口选中活动时注入上下文：之后的提问锚定这次骑行。"""
+        if not act:
+            return self.clear_activity()
+        self._activity = act
+        self.ctx_label.setText(
+            f"🎯 关联活动：{act.get('name')} · {(act.get('start_time') or '')[:10]}"
+            f" · {act.get('distance_km')}km")
+        self.ctx_bar.setVisible(True)
+        self.btn_review.setVisible(True)
+        month = self._activity_month(act)
+        if month:
+            self.set_scope(f"当前范围：活动《{act.get('name')}》（数据取自 {month}）")
+
+    def clear_activity(self):
+        self._activity = None
+        self.ctx_bar.setVisible(False)
+        self.btn_review.setVisible(False)
+
+    def _activity_prefix(self, act):
+        """给提问加活动锚定前缀（模型仍可用月份工具查更多数据）。"""
+        parts = [f"活动《{act.get('name')}》",
+                 f"日期 {(act.get('start_time') or '')[:16]}",
+                 "通勤骑行" if act.get("commute") else "训练骑行"]
+        if act.get("distance_km") is not None:
+            parts.append(f"距离 {act['distance_km']}km")
+        if act.get("moving_h") is not None:
+            parts.append(f"骑行 {act['moving_h']}h")
+        if act.get("avg_speed_kmh"):
+            parts.append(f"均速 {act['avg_speed_kmh']}km/h（最大 {act.get('max_speed_kmh') or '—'}）")
+        if act.get("total_ascent_m"):
+            parts.append(f"爬升 {act['total_ascent_m']}m")
+        if act.get("avg_hr"):
+            parts.append(f"均心率 {act['avg_hr']}bpm")
+        if act.get("avg_cad"):
+            parts.append(f"均踏频 {act['avg_cad']}rpm")
+        if act.get("avg_power"):
+            parts.append(f"均功率 {act['avg_power']}W"
+                         + ("（估算）" if act.get("power_estimated") else ""))
+        if act.get("calories"):
+            parts.append(f"消耗 {act['calories']}kcal")
+        return "【当前选中的活动】" + "，".join(parts) + "。请优先围绕这次骑行回答。"
 
     def reset_session(self):
         """切换月份时调用：清空会话（旧月上下文不再有效）。"""
@@ -207,6 +278,38 @@ class AiAssistantPanel(QWidget):
         self._set_text(text)
         self.history = month_agent.append_round(self.history, f"生成 {month} 的月度训练总结", text)
 
+    def ask_review(self):
+        """一键复盘当前关联活动（review_agent 单次复盘链路）。"""
+        if not self._mw.config.get("ai_enabled"):
+            QMessageBox.information(self._mw, "提示", "请先在「设置」中启用并配置 AI")
+            return
+        act = self._activity
+        if not act:
+            QMessageBox.information(self._mw, "提示", "请先在活动列表选择一次骑行")
+            return
+        self.btn_review.setEnabled(False)
+        self._set_text(f"AI 复盘《{act.get('name')}》中，请稍候…")
+        self._mw._run_worker(self._do_review, self._on_review_done, act)
+
+    def _do_review(self, act):
+        from core import review_agent
+        return review_agent.run_review(
+            self._mw._ai_client(), self._mw.db, self._mw.config,
+            "请复盘这次骑行：结合速度/心率/踏频/功率数据点评表现，"
+            "指出做得好与需改进的地方，给出具体可执行的训练建议。",
+            current_activity=act)
+
+    def _on_review_done(self, ok, payload):
+        self.btn_review.setEnabled(True)
+        if not ok:
+            self._set_text(f"错误：{payload}")
+            return
+        text = payload.get("answer") if isinstance(payload, dict) else str(payload)
+        self._set_text(text)
+        if self._activity:
+            self.history = month_agent.append_round(
+                self.history, f"复盘活动《{self._activity.get('name')}》", text)
+
     def ask(self):
         """自由提问（多轮会话 + 流式 + Action 确认）。"""
         if not self._mw.config.get("ai_enabled"):
@@ -216,6 +319,10 @@ class AiAssistantPanel(QWidget):
         if not q:
             return
         month = self._current_month()
+        if self._activity:
+            # 关联活动优先：问题锚定到这次骑行，数据取其所在月份
+            month = self._activity_month(self._activity) or month
+            q = f"{self._activity_prefix(self._activity)}\n\n用户问题：{q}"
         if not month:
             QMessageBox.information(self._mw, "提示", "请先在左侧选择一个月份")
             return
