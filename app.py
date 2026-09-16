@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 APP_NAME = "骑行FIT数据分析器"
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 
 def resource_path(rel):
@@ -52,6 +52,9 @@ def _run_headless_check(data_dir_arg):
     data_dir.mkdir(parents=True, exist_ok=True)
     logging_setup.setup_logging(data_dir, console=True)
     config = Config(data_dir / "config.json")
+    # 与 main() 相同：headless 路径也同步真实版本（离线检查可能触发提醒推送）
+    if config.get("version") != VERSION:
+        config.set("version", VERSION)
     db = db_mod.DB(data_dir / "fit.db")
 
     log = logging.getLogger("fit.headless")
@@ -111,6 +114,12 @@ def main():
     logger.info("数据目录: %s", data_dir)
 
     config = Config(data_dir / "config.json")
+    # 版本号以代码为准：config 里持久化的是安装时写入的旧版本，
+    # 自更新替换文件后若不同步，标题/关于仍显示旧版本，且更新检查
+    # 会拿旧版本与 manifest 比较 → 反复提醒"更新"到已装的同一版本。
+    if config.get("version") != VERSION:
+        logger.info("版本同步：%s -> %s", config.get("version"), VERSION)
+        config.set("version", VERSION)
     db = db_mod.DB(data_dir / "fit.db")
     logger.info("数据库中已有活动数: %d", db.count())
 
