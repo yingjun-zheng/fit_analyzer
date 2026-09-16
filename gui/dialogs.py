@@ -2,6 +2,7 @@
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
@@ -146,7 +147,6 @@ class SettingsDialog(QDialog):
         push_title = QLabel("离线推送（5.5）")
         push_title.setObjectName("h3")
         form.addRow(push_title)
-        from PySide6.QtWidgets import QPlainTextEdit
         self.edWebhooks = QPlainTextEdit(str(d.get("webhook_urls") or "").replace(",", "\n"))
         self.edWebhooks.setPlaceholderText("每行一个群机器人 Webhook 地址，支持：\n"
                                            "· 飞书群机器人\n· 企业微信群机器人\n· 钉钉群机器人")
@@ -199,7 +199,6 @@ class SettingsDialog(QDialog):
         form.addRow(self.chkAutoUpdate)
         form.addRow(self.chkCloseToTray)
         # 定时周报
-        from PySide6.QtWidgets import QComboBox
         self.chkWeekly = QCheckBox("每周定时生成训练周报")
         self.chkWeekly.setChecked(bool(d.get("weekly_report_enabled")))
         self.cmbWeekday = QComboBox()
