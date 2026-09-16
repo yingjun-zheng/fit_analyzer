@@ -65,6 +65,9 @@ DEFAULTS = {
     # 配置后提醒与周报会同步推送到群（配合计划任务可实现离线推送）
     "webhook_urls": "",
     "offline_task_installed": False,    # 是否已安装 Windows 计划任务（离线检查）
+    # ---- 自动导入（P3：文件夹监控） ----
+    "auto_import_enabled": False,       # 监控码表导出目录，自动导入新 FIT
+    "auto_import_dir": "",              # 监控目录（空=未设置）
 }
 
 _SENSITIVE = {"ai_api_key", "amap_security", "amap_web_key"}

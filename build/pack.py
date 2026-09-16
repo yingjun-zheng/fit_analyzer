@@ -71,6 +71,8 @@ def do_publish(out_dir: Path, notes: str):
         except Exception:
             pass
     notes_list = [n.strip() for n in (notes or "").split(";") if n.strip()]
+    # 同版本重发布时去重：先移除旧的同版本条目再插入新条目
+    changelog = [c for c in changelog if c.get("version") != version]
     changelog.insert(0, {"version": version, "date": today, "notes": notes_list or ["本次发布"]})
     changelog = changelog[:10]
 

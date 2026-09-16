@@ -2,7 +2,7 @@
 
 A free, local, offline **cycling FIT data analysis tool** (pure desktop Windows app, native PySide6 GUI, no browser, no local server). Inspired by the analysis features of Garmin Connect / XOSS.
 
-- **Native desktop GUI** with **batch import** of `.fit` files exported from bike computers (iGPSPORT / Garmin / XOSS and other major devices), stored in local SQLite; you can also **drag & drop `.fit` files onto the window** to import
+- **Native desktop GUI** with **batch import** of `.fit` files exported from bike computers (iGPSPORT / Garmin / XOSS and other major devices), stored in local SQLite; you can also **drag & drop `.fit` files onto the window** to import — and there is **folder-monitor auto-import**: new files appearing in your bike computer's export folder are imported automatically with a tray notification
 - Per-activity display: **record time, average speed, calories, max speed, average heart rate, average cadence, total ascent** and 16+ metrics
 - **Per-kilometer speed line chart**, **speed zone stats**, **heart rate stats & zones**, **cadence stats & zones**, **altitude stats**, **device temperature stats**
 - **Lap (segment) data detail**, **all activity detail fields**
@@ -17,7 +17,8 @@ A free, local, offline **cycling FIT data analysis tool** (pure desktop Windows 
 - **Heart-rate zone deep summary**: turn 5-zone HR distribution into training-structure diagnosis (aerobic / threshold / anaerobic proportions + pace comparison + advice)
 - **Nutrition plan**: quantified hydration / carbohydrate / electrolyte recommendations by distance / time / intensity / temperature
 - **Post-ride recovery advice**: quantified cool-down, carb refuel, protein, hydration and sleep recommendations by intensity / duration / temperature / ascent
-- **Gear maintenance manager**: consumable ledger (chain / disc pads / bar tape etc.), usage accumulated automatically from ride distance, with replacement reminders on the monthly view once expected lifespan is reached (supports maintenance reset and retirement)
+- **Gear maintenance manager**: consumable ledger (chain / disc pads / bar tape etc.), usage accumulated automatically from ride distance, with replacement reminders on the monthly view once expected lifespan is reached (supports maintenance reset and retirement); **multi-bike management** — tag each ride with the bike you rode, and gear attached to that bike only counts that bike's mileage, made for multi-bike riders
+- **Commute tagging & mileage split**: right-click an activity to tag it as a commute; monthly stats and Excel reports split commute vs training mileage
 - **Power curve**: best average power over 1/2/5/10/20/30/60-minute windows (labeled "estimated" when no power meter)
 - **Place-name disambiguation**: when the auto-planner's origin/destination has multiple matches (e.g. "Chaoyang"), a picker list is shown
 - **FTP auto-estimation**: best 20-minute power × 0.95 to estimate FTP + power-to-weight ratio
@@ -30,6 +31,7 @@ A free, local, offline **cycling FIT data analysis tool** (pure desktop Windows 
 - **Webhook group push + scheduled task**: alerts/reports can be pushed to Feishu / WeCom / DingTalk group bots; install a Windows scheduled task to run offline checks and push even when the app is closed
 - **Self-update engine**: check for updates (auto on launch / manual), update changelog, incremental package download (app-layer files only, a few MB) verified by sha256, auto-replaced and restarted; publishing is one command with `build/pack.py --publish`
 - **GPX export**: export a single activity as GPX 1.1 (with Garmin TrackPointExtension: HR / cadence / temperature / speed / power), compatible with Strava / Garmin Connect / XOSS
+- **Data export & backup**: one-click **Excel report** (activity detail + monthly summary in two sheets, commute/training mileage split); **one-click database backup** (consistent online snapshot, works while the app is running)
 - Built-in **logging system** (rolling files + in-app live view)
 
 ![月概览](imgs/月概览.png)
@@ -281,6 +283,8 @@ fit_analyzer/
 │   ├── ftp_estimate.py   # FTP auto-estimation
 │   ├── safety.py         # ride safety analysis (sudden-stop / crash detection)
 │   ├── gpx_export.py     # GPX 1.1 export (HR/cadence/temperature/speed/power extensions)
+│   ├── excel_export.py   # Excel report export (activity detail + monthly summary) + DB backup
+│   ├── auto_import.py    # folder-monitor auto import (fingerprint detection of new FIT)
 │   ├── ai_client.py      # OpenAI-compatible client (with missing-model hint)
 │   ├── ai_analysis.py    # activity/monthly AI analysis prompts
 │   ├── month_agent.py    # monthly ride query agent (tool-calling)

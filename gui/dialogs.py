@@ -221,6 +221,27 @@ class SettingsDialog(QDialog):
         upd_tip.setWordWrap(True)
         form.addRow(upd_tip)
 
+        # 自动导入（P3：监控码表导出目录）
+        auto_title = QLabel("自动导入")
+        auto_title.setObjectName("h3")
+        form.addRow(auto_title)
+        self.chkAutoImport = QCheckBox("监控文件夹，自动导入新的 FIT 文件（每 30 秒检查一次）")
+        self.chkAutoImport.setChecked(bool(d.get("auto_import_enabled")))
+        form.addRow(self.chkAutoImport)
+        auto_row = QHBoxLayout()
+        self.edAutoDir = QLineEdit(d.get("auto_import_dir") or "")
+        self.edAutoDir.setPlaceholderText("码表导出目录（如 D\\Garmin\\Export）")
+        self.btnAutoDir = QPushButton("浏览…")
+        self.btnAutoDir.clicked.connect(self._pick_auto_dir)
+        auto_row.addWidget(self.edAutoDir, 1)
+        auto_row.addWidget(self.btnAutoDir)
+        form.addRow("监控文件夹", auto_row)
+        auto_tip = QLabel("开启后每 30 秒扫描该文件夹，发现新 FIT 文件自动导入并托盘提示；"
+                          "已导入过的文件不会重复入库。")
+        auto_tip.setObjectName("muted")
+        auto_tip.setWordWrap(True)
+        form.addRow(auto_tip)
+
         # 诊断与日志（面向排障/开发，一般用户无需使用）
         diag_title = QLabel("诊断与日志")
         diag_title.setObjectName("h3")
@@ -344,6 +365,14 @@ class SettingsDialog(QDialog):
         except Exception as e:  # noqa: BLE001
             self._task_feedback(False, str(e), "卸载")
 
+    def _pick_auto_dir(self):
+        """选择自动导入监控目录。"""
+        from PySide6.QtWidgets import QFileDialog
+        cur = self.edAutoDir.text().strip()
+        d = QFileDialog.getExistingDirectory(self, "选择监控文件夹", cur or "")
+        if d:
+            self.edAutoDir.setText(d)
+
     def _task_feedback(self, ok, detail, action):
         from PySide6.QtWidgets import QMessageBox
         if ok:
@@ -417,6 +446,8 @@ class SettingsDialog(QDialog):
             "weekly_report_time": self.edWeeklyTime.text().strip() or "21:00",
             "webhook_urls": "\n".join(
                 [ln.strip() for ln in self.edWebhooks.toPlainText().splitlines() if ln.strip()]),
+            "auto_import_enabled": self.chkAutoImport.isChecked(),
+            "auto_import_dir": self.edAutoDir.text().strip(),
             "ssl_insecure_fallback": self.chkSslFallback.isChecked(),
         })
         # 让 SSL 降级开关立即生效（下次请求即按新配置），不必重启应用

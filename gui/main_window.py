@@ -167,6 +167,7 @@ class MainWindow(QMainWindow):
         self._start_weekly_scheduler()
         self._schedule_update_check()  # 启动 3 秒后静默检查更新
         self._schedule_alerts()        # 启动 4 秒后检测一次阈值提醒
+        self._init_auto_import()       # P3：文件夹监控自动导入
 
     # ---------------- UI 构建 ----------------
     def _build_ui(self):
@@ -1691,6 +1692,59 @@ class MainWindow(QMainWindow):
         if payload.get("imported") or payload.get("updated"):
             self._run_alerts_now()
 
+    # ---------------- 自动导入（P3：文件夹监控） ----------------
+    def _init_auto_import(self):
+        """启动自动导入轮询：首轮只记录目录现状（基线），之后增量导入新文件。"""
+        self._auto_seen = {}       # {路径: (size, mtime_ns)} 已见文件指纹
+        self._auto_baseline = True  # 首轮基线：只记录不导入，避免启动全量重解析
+        self._auto_busy = False
+        self._auto_timer = QTimer(self)
+        self._auto_timer.setInterval(30000)  # 30 秒轮询，稳且零依赖
+        self._auto_timer.timeout.connect(self._auto_import_tick)
+        self._auto_timer.start()
+
+    def reset_auto_import(self):
+        """设置变更后调用：清空基线，下轮把目录内现有文件全部导入。"""
+        self._auto_seen = {}
+        self._auto_baseline = False
+
+    def _auto_import_tick(self):
+        if not self.config.get("auto_import_enabled"):
+            return
+        folder = (self.config.get("auto_import_dir") or "").strip()
+        if not folder or self._auto_busy:
+            return
+        from core import auto_import
+        new_files, self._auto_seen = auto_import.scan_new_files(folder, self._auto_seen)
+        if self._auto_baseline:
+            self._auto_baseline = False  # 基线轮：只记录指纹
+            return
+        if not new_files:
+            return
+        self._auto_busy = True
+        self.statusBar().showMessage(f"自动导入：发现 {len(new_files)} 个新 FIT 文件…")
+        self._run_worker(self._do_import, self._on_auto_import_done, new_files)
+
+    def _on_auto_import_done(self, ok, payload):
+        """自动导入完成：不弹模态框，托盘气泡 + 状态栏提示。"""
+        self._auto_busy = False
+        if not ok:
+            log.warning("自动导入失败：%s", payload)
+            self.statusBar().showMessage("自动导入失败，详见日志", 5000)
+            return
+        r = payload
+        if r["errors"]:
+            log.warning("自动导入部分失败：%s",
+                        [e.get("file") for e in r["errors"][:8]])
+        if r["imported"] or r["updated"]:
+            self.load_months()
+            self._run_alerts_now()
+        self.statusBar().showMessage(
+            f"自动导入完成：新增 {r['imported']}，更新 {r['updated']}", 8000)
+        if r["imported"] and getattr(self, "_tray", None) is not None:
+            self._tray.notify("📥 自动导入完成",
+                              f"从监控目录新增 {r['imported']} 条骑行记录")
+
     # ---------------- AI ----------------
     def _ai_client(self):
         return ai_client.AIClient(
@@ -1804,8 +1858,15 @@ class MainWindow(QMainWindow):
 
     # ---------------- 其他 ----------------
     def open_settings(self):
+        auto_before = (self.config.get("auto_import_enabled"),
+                       self.config.get("auto_import_dir"))
         dlg = SettingsDialog(self.config, self, on_reidentify=self.reidentify_devices, db=self.db)
         dlg.exec()
+        # 自动导入设置有变化：重置基线，下轮把目录内现有文件全部导入
+        auto_after = (self.config.get("auto_import_enabled"),
+                      self.config.get("auto_import_dir"))
+        if auto_before != auto_after:
+            self.reset_auto_import()
         # 设置可能改变统计口径/年度目标/功率估算参数 → 强制重建当前视图
         if self.stack.currentWidget() is self.act_page and self.cur_activity is not None:
             self.show_activity(self.cur_activity["id"], force=True)
