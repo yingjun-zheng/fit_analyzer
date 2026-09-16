@@ -18,3 +18,4 @@ data/
 # 编辑器
 .idea/
 .vscode/
+release/
