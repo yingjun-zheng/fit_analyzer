@@ -32,7 +32,7 @@ AGENT_SYSTEM = """你是骑行训练分析助手，通过调用工具来回答�
    compare_activities 查两次活动对比（「进步了没」）、get_fitness_summary 查体能指标
    （心速比/心率漂移/踏频质量）、get_gear_status 查装备台账（「装备要换了吗」）。
    复合问题（如「对比这周和上周，然后看看我该不该休息」）可连续调用多个工具。
-9. 写操作（set_ftp / set_year_goal / add_gear / set_commute）会先弹出确认框征求用户同意：
+9. 写操作（set_ftp / set_year_goal / add_gear / set_commute / set_vehicle）会先弹出确认框征求用户同意：
    调用前先用一句话说明打算做什么（如「我来帮你把 FTP 设为 250W，请确认」），
    工具返回「已执行/用户取消」后再基于结果作答，不要假装已经修改。"""
 
@@ -171,7 +171,7 @@ MONTH_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_gear_status",
-            "description": "装备台账：链条/碟片等消耗件的累计里程、预期寿命进度、状态（ok/watch/due）与保养建议。可用 level 筛选（due=需更换 watch=留意）。用于「装备要换了吗」类问题。",
+            "description": "装备台账：链条/碟片等消耗件的累计里程、预期寿命进度、状态（ok/watch/due）与保养建议。可用 level 筛选（due=需更换 watch=留意）、vehicle 筛选所属车辆。用于「装备要换了吗」类问题。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -179,6 +179,10 @@ MONTH_TOOLS = [
                         "type": "string",
                         "enum": ["due", "watch", "ok", "none"],
                         "description": "按状态筛选；省略则返回全部非退役装备",
+                    },
+                    "vehicle": {
+                        "type": "string",
+                        "description": "按所属车辆筛选（如「公路车」）；省略则返回全部",
                     },
                 },
             },
@@ -241,6 +245,21 @@ MONTH_TOOLS = [
                     "flag": {"type": "boolean", "description": "true=标记为通勤，false=取消标记，默认 true"},
                 },
                 "required": ["date"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "set_vehicle",
+            "description": "把某天的骑行标记为骑的哪辆车（用于装备按车辆分开统计里程）。车辆名需与装备台账中的车辆一致。写操作：会弹出确认框。同一天多次骑行时标记最近一次。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "date": {"type": "string", "description": "骑行日期 YYYY-MM-DD"},
+                    "vehicle": {"type": "string", "description": "车辆名（如「公路车」）；空字符串表示清除标记"},
+                },
+                "required": ["date", "vehicle"],
             },
         },
     },
@@ -461,12 +480,16 @@ def _tool_fitness(db, date=None, config=None):
     return out
 
 
-def _tool_gear(db, level=None):
-    """装备台账与保养提醒。"""
+def _tool_gear(db, level=None, vehicle=None):
+    """装备台账与保养提醒（可按状态/所属车辆筛选）。"""
     from . import gear
     report = gear.gear_report(db)
     if not report:
         return {"error": "装备台账为空（工具 → 装备管家 可添加）"}
+    if vehicle:
+        report = [s for s in report if s.get("vehicle") == vehicle]
+        if not report:
+            return {"error": f"没有所属车辆为「{vehicle}」的装备"}
     if level:
         report = [s for s in report if s["level"] == level]
         if not report:
@@ -528,6 +551,23 @@ def _exec_action(name, args, ctx):
                            f"（{act.get('distance_km')}km）标记为{'通勤' if flag else '训练'}",
             "apply": lambda: db.set_commute(act["id"], flag),
         }
+    elif name == "set_vehicle":
+        date = (args.get("date") or "").strip()
+        vehicle = (args.get("vehicle") or "").strip()
+        if not _DATE_ARG_RE.match(date):
+            return {"error": "日期格式需为 YYYY-MM-DD"}
+        rows = [r for r in db.list_activities(month=date[:7])
+                if (r.get("start_time") or "")[:10] == date]
+        if not rows:
+            return {"error": f"{date} 没有骑行记录"}
+        act = rows[0]
+        desc = (f"把 {date} 的骑行《{act.get('name')}》标记为骑「{vehicle}」"
+                if vehicle else f"清除 {date} 骑行《{act.get('name')}》的车辆标记")
+        action = {
+            "type": "set_vehicle",
+            "description": desc,
+            "apply": lambda: db.set_activity_vehicle(act["id"], vehicle),
+        }
     else:
         return {"error": f"未知操作: {name}"}
     on_action = ctx.get("on_action")
@@ -572,8 +612,8 @@ def _dispatch(name, args, ctx):
     if name == "get_fitness_summary":
         return _tool_fitness(db, args.get("date"), ctx["config"])
     if name == "get_gear_status":
-        return _tool_gear(db, args.get("level"))
-    if name in ("set_ftp", "set_year_goal", "add_gear", "set_commute"):
+        return _tool_gear(db, args.get("level"), args.get("vehicle"))
+    if name in ("set_ftp", "set_year_goal", "add_gear", "set_commute", "set_vehicle"):
         return _exec_action(name, args, ctx)
     return {"error": f"未知工具: {name}"}
 
@@ -621,7 +661,7 @@ def run_month_query(ai, db, month, config, question, max_rounds=5, history=None,
               ("tool", name, args)              开始调用工具
               ("tool_result", name, ok)         工具执行完成
     on_action: 可选回调 on_action(action) -> bool。Action 工具（set_ftp /
-               set_year_goal / add_gear / set_commute）先调它征求用户确认；返回 True 才执行。
+               set_year_goal / add_gear / set_commute / set_vehicle）先调它征求用户确认；返回 True 才执行。
                不传则所有写操作被拒绝（安全默认）。
     返回 {"answer", "thinking", "steps":[{tool,args,ok}], "fallback", "history"}，
     history 为包含本轮问答的完整会话历史。

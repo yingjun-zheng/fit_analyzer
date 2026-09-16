@@ -41,7 +41,8 @@ CREATE TABLE IF NOT EXISTS activities (
     record_count INTEGER,
     imported_at TEXT,
     tss REAL, tss_method TEXT, tss_sig TEXT,
-    commute INTEGER DEFAULT 0
+    commute INTEGER DEFAULT 0,
+    vehicle TEXT DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_act_start ON activities(start_ts);
 CREATE INDEX IF NOT EXISTS idx_act_month ON activities(start_time);
@@ -71,6 +72,7 @@ CREATE TABLE IF NOT EXISTS gear (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     type TEXT,
+    vehicle TEXT DEFAULT '',
     start_date TEXT,
     start_ts INTEGER,
     initial_km REAL DEFAULT 0,
@@ -137,11 +139,17 @@ class DB:
             "tss_sig": "TEXT",
             "month": "TEXT",
             "commute": "INTEGER DEFAULT 0",
+            "vehicle": "TEXT DEFAULT ''",
         }
         for col, typ in adds.items():
             if col not in cols:
                 self.conn.execute(f"ALTER TABLE activities ADD COLUMN {col} {typ}")
                 log.info("数据库迁移：activities 增加列 %s", col)
+        # gear 表迁移（P2-B：装备挂车辆）
+        gcols = {r["name"] for r in self.conn.execute("PRAGMA table_info(gear)")}
+        if "vehicle" not in gcols:
+            self.conn.execute("ALTER TABLE gear ADD COLUMN vehicle TEXT DEFAULT ''")
+            log.info("数据库迁移：gear 增加列 vehicle")
         # month 物化列回填：与旧查询 substr(start_time,1,7) 保持完全一致的口径
         # （按码表本地显示时间归属月份）。month IS NULL 仅存在于旧库首次迁移
         # 或极端中断场景，平时这条 UPDATE 命中 0 行，启动开销可忽略。
@@ -357,6 +365,22 @@ class DB:
         log.info("活动 %s 通勤标记 -> %s", aid, bool(flag))
 
     @_locked
+    def set_activity_vehicle(self, aid, vehicle):
+        """标记该次骑行骑的哪辆车（''=清除标记）。"""
+        self.conn.execute(
+            "UPDATE activities SET vehicle=? WHERE id=?", (vehicle or "", aid))
+        self.conn.commit()
+        log.info("活动 %s 骑行车辆 -> %s", aid, vehicle or "(清除)")
+
+    @_locked
+    def vehicle_names(self):
+        """车辆清单 = 装备台账里出现过的车辆名（去重、按名称排序）。"""
+        rows = self.conn.execute(
+            "SELECT DISTINCT vehicle FROM gear WHERE vehicle<>'' ORDER BY vehicle"
+        ).fetchall()
+        return [r["vehicle"] for r in rows]
+
+    @_locked
     def delete_month(self, month):
         """删除整月活动（含记圈/逐条记录）。返回删除的活动条数。
         显式先删子表再删主表：比依赖外键逐行级联快得多
@@ -446,15 +470,16 @@ class DB:
         return [dict(r) for r in rows]
 
     @_locked
-    def gear_add(self, name, type_, start_date, start_ts, initial_km, expected_km, note=""):
+    def gear_add(self, name, type_, start_date, start_ts, initial_km, expected_km,
+                 note="", vehicle=""):
         cur = self.conn.execute(
-            """INSERT INTO gear (name, type, start_date, start_ts, initial_km, expected_km, note)
-               VALUES (?,?,?,?,?,?,?)""",
-            (name, type_, start_date, start_ts, initial_km, expected_km, note))
+            """INSERT INTO gear (name, type, vehicle, start_date, start_ts, initial_km, expected_km, note)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (name, type_, vehicle or "", start_date, start_ts, initial_km, expected_km, note))
         self.conn.commit()
         return cur.lastrowid
 
-    _GEAR_COLS = {"name", "type", "start_date", "start_ts", "initial_km",
+    _GEAR_COLS = {"name", "type", "vehicle", "start_date", "start_ts", "initial_km",
                   "expected_km", "note", "retired", "retired_ts"}
 
     @_locked
@@ -474,14 +499,24 @@ class DB:
         self.conn.commit()
 
     @_locked
-    def sum_distance_between(self, start_ts, end_ts=None):
-        """时间窗 [start_ts, end_ts) 内活动总里程（米）；end_ts 为空表示至今。"""
-        if end_ts is None:
-            row = self.conn.execute(
-                "SELECT SUM(total_distance_m) AS d FROM activities WHERE start_ts>=?",
-                (start_ts,)).fetchone()
+    def sum_distance_between(self, start_ts, end_ts=None, vehicle=None):
+        """时间窗 [start_ts, end_ts) 内活动总里程（米）；end_ts 为空表示至今。
+
+        vehicle=None：全部活动（兼容既有调用方）；
+        vehicle=名称：只统计该车辆的活动（P2-B 装备按车统计的口径）；
+        vehicle=''：只统计未标记车辆的活动。
+        """
+        if vehicle is None:
+            sql = "SELECT SUM(total_distance_m) AS d FROM activities WHERE start_ts>=?"
+            args = [start_ts]
         else:
-            row = self.conn.execute(
-                "SELECT SUM(total_distance_m) AS d FROM activities WHERE start_ts>=? AND start_ts<?",
-                (start_ts, end_ts)).fetchone()
+            sql = ("SELECT SUM(total_distance_m) AS d FROM activities"
+                   " WHERE start_ts>=? AND vehicle=?")
+            args = [start_ts, vehicle]
+        if end_ts is None:
+            pass
+        else:
+            sql += " AND start_ts<?"
+            args.append(end_ts)
+        row = self.conn.execute(sql, args).fetchone()
         return row["d"] or 0.0

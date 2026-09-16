@@ -9,8 +9,9 @@
 - 使用进度 = 装备里程 / expected_km：>=100% 建议更换，70%~100% 关注
 - 保养归零 = 把启用日期重置为今天（预期寿命重新计）
 
-说明：v1 的里程按全部活动累计（不区分车辆）；单人单车场景足够精确，
-多车用户可为每辆车分别建账（如「公路车-链条」「山地车-链条」）。
+说明：装备里程按「所属车辆」的活动累计（P2-B 多车管理）：
+- 装备挂了车辆 → 只算该车辆的活动里程（精确）
+- 装备未挂车辆（vehicle 空）→ 兼容旧口径，按全部活动累计
 """
 import datetime
 
@@ -33,10 +34,14 @@ def ts_to_date(ts):
 
 
 def gear_mileage_km(db, g):
-    """单件装备的累计使用里程（km）。"""
+    """单件装备的累计使用里程（km）。
+
+    挂了车辆的装备只算该车辆的活动里程；未挂车辆按全部活动（旧口径）。
+    """
     end_ts = g.get("retired_ts") if g.get("retired") else None
+    vehicle = g.get("vehicle") or None  # ''→None：未挂车按全部活动
     return (g.get("initial_km") or 0) + \
-        db.sum_distance_between(g.get("start_ts") or 0, end_ts) / 1000.0
+        db.sum_distance_between(g.get("start_ts") or 0, end_ts, vehicle=vehicle) / 1000.0
 
 
 def gear_status(db, g):
@@ -63,6 +68,7 @@ def gear_status(db, g):
         advice = f"已 {km:.0f} km（未设预期寿命）"
     return {
         "id": g["id"], "name": g.get("name"), "type": g.get("type"),
+        "vehicle": g.get("vehicle") or "",
         "start_date": g.get("start_date"), "km": round(km, 1),
         "expected_km": expected or None,
         "pct": round(pct, 1) if pct is not None else None,

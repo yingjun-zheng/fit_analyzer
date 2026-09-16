@@ -23,7 +23,7 @@ _LEVEL_CN = {"due": "建议更换", "watch": "关注", "ok": "良好", "none": "
 class _GearEditDialog(QDialog):
     """添加 / 编辑装备的子表单。"""
 
-    def __init__(self, parent=None, item=None):
+    def __init__(self, parent=None, item=None, vehicles=None):
         super().__init__(parent)
         self.setWindowTitle("编辑装备" if item else "添加装备")
         self.setMinimumWidth(380)
@@ -35,6 +35,14 @@ class _GearEditDialog(QDialog):
         self.cb_type.setEditable(True)
         self.cb_type.addItems(list(gear_mod.GEAR_TYPES.keys()))
         self.cb_type.setCurrentText((item or {}).get("type") or "链条")
+        # 所属车辆（P2-B）：挂了车的装备只按该车活动里程计
+        self.cb_vehicle = QComboBox()
+        self.cb_vehicle.setEditable(True)
+        self.cb_vehicle.addItem("")  # 空 = 通用（按全部活动计）
+        for v in (vehicles or []):
+            self.cb_vehicle.addItem(v)
+        self.cb_vehicle.setCurrentText((item or {}).get("vehicle") or "")
+        self.cb_vehicle.setPlaceholderText("留空=通用（按全部活动计里程）")
         start = (item or {}).get("start_date")
         self.de_start = QDateEdit(QDate.currentDate(), calendarPopup=True,
                                   displayFormat="yyyy-MM-dd")
@@ -49,6 +57,7 @@ class _GearEditDialog(QDialog):
         self.ed_note = QLineEdit((item or {}).get("note") or "")
 
         for label, w in [("名称", self.ed_name), ("类型", self.cb_type),
+                         ("所属车辆", self.cb_vehicle),
                          ("启用日期", self.de_start), ("启用时已有里程 km", self.ed_initial),
                          ("预期寿命 km", self.ed_expected), ("备注", self.ed_note)]:
             row = QHBoxLayout()
@@ -82,6 +91,7 @@ class _GearEditDialog(QDialog):
         d = self.de_start.date().toString("yyyy-MM-dd")
         return {
             "name": name, "type": self.cb_type.currentText().strip(),
+            "vehicle": self.cb_vehicle.currentText().strip(),
             "start_date": d, "start_ts": gear_mod.date_to_ts(d),
             "initial_km": max(0.0, initial), "expected_km": max(0.0, expected),
             "note": self.ed_note.text().strip(),
@@ -98,15 +108,16 @@ class GearDialog(QDialog):
         self.resize(820, 480)
         lay = QVBoxLayout(self)
 
-        tip = QLabel("装备里程 = 启用日期以来的全部活动里程（+启用时已有里程）。"
-                     "达到预期寿命自动提醒；更换/保养后点「保养归零」重新计时。")
+        tip = QLabel("装备里程 = 启用日期以来「所属车辆」的活动里程（+启用时已有里程）；"
+                     "未指定车辆按全部活动计。每次骑行可在活动列表右键标记骑行车辆，"
+                     "或让 AI 助手帮忙标记。达到预期寿命自动提醒；更换/保养后点「保养归零」重新计时。")
         tip.setObjectName("muted")
         tip.setWordWrap(True)
         lay.addWidget(tip)
 
-        self.table = QTableWidget(0, 7)
+        self.table = QTableWidget(0, 8)
         self.table.setHorizontalHeaderLabels(
-            ["名称", "类型", "启用日期", "累计里程", "预期寿命", "使用进度", "状态"])
+            ["名称", "类型", "所属车辆", "启用日期", "累计里程", "预期寿命", "使用进度", "状态"])
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -136,7 +147,8 @@ class GearDialog(QDialog):
         self.table.setRowCount(len(report))
         for r, s in enumerate(report):
             status = "已退役" if s["retired"] else _LEVEL_CN[s["level"]]
-            vals = [s["name"], s["type"] or "—", s["start_date"] or "—",
+            vals = [s["name"], s["type"] or "—", s.get("vehicle") or "通用",
+                    s["start_date"] or "—",
                     f"{s['km']:.0f} km",
                     f"{s['expected_km']:.0f} km" if s["expected_km"] else "—",
                     f"{s['pct']:.0f}%" if s["pct"] is not None else "—", status]
@@ -145,7 +157,7 @@ class GearDialog(QDialog):
                 color = QColor("#b0b8c0")
             for c, v in enumerate(vals):
                 item = QTableWidgetItem(str(v))
-                if c >= 3:
+                if c >= 4:
                     item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 item.setData(Qt.UserRole, s["id"])
                 item.setToolTip(s["advice"])
@@ -165,7 +177,7 @@ class GearDialog(QDialog):
         return None
 
     def _add(self):
-        dlg = _GearEditDialog(self)
+        dlg = _GearEditDialog(self, vehicles=self.db.vehicle_names())
         if dlg.exec() != QDialog.Accepted:
             return
         f, err = dlg.fields()
@@ -173,7 +185,8 @@ class GearDialog(QDialog):
             QMessageBox.information(self, "提示", err)
             return
         self.db.gear_add(f["name"], f["type"], f["start_date"], f["start_ts"],
-                         f["initial_km"], f["expected_km"], f["note"])
+                         f["initial_km"], f["expected_km"], f["note"],
+                         vehicle=f["vehicle"])
         self.refresh()
 
     def _edit(self):
@@ -181,7 +194,7 @@ class GearDialog(QDialog):
         if not g:
             QMessageBox.information(self, "提示", "请先选中一件装备")
             return
-        dlg = _GearEditDialog(self, item=g)
+        dlg = _GearEditDialog(self, item=g, vehicles=self.db.vehicle_names())
         if dlg.exec() != QDialog.Accepted:
             return
         f, err = dlg.fields()

@@ -232,6 +232,10 @@ class MainWindow(QMainWindow):
                          "批量导入码表导出的 FIT 文件（也可直接拖拽 .fit 进窗口）")
         self._add_action(m_file, "📤 导出 GPX", self.export_gpx, "Ctrl+E",
                          "把当前选中的活动导出为 GPX 1.1 文件")
+        self._add_action(m_file, "📊 导出 Excel 报表…", self.export_excel_report, "Ctrl+Shift+E",
+                         "导出全部活动明细 + 月度汇总（含通勤/训练里程拆分）")
+        self._add_action(m_file, "💾 备份数据库…", self.backup_database,
+                         "把骑行数据库（fit.db）备份为一致性快照副本")
         m_file.addSeparator()
         self._add_action(m_file, "🗑 删除选中", self.delete_selected, "Del",
                          "删除左侧选中的活动记录（可多选）")
@@ -949,11 +953,22 @@ class MainWindow(QMainWindow):
         act_one = None
         act_month = None
         act_commute = None
+        vehicle_menu = None
         kind0, data0 = item.data(0, Qt.UserRole)
         if kind0 == ACTIVITY:
             act_one = menu.addAction("删除此记录")
             is_c = bool(self.db.get_activity(data0).get("commute"))
             act_commute = menu.addAction("取消通勤标记" if is_c else "🚴 标记为通勤")
+            # 骑行车辆（P2-B）：车辆清单来自装备台账的所属车辆
+            vehicles = self.db.vehicle_names()
+            if vehicles:
+                vehicle_menu = menu.addMenu("🚲 骑行车辆")
+                cur_v = self.db.get_activity(data0).get("vehicle") or ""
+                for v in vehicles:
+                    act_v = vehicle_menu.addAction(("✓ " if v == cur_v else "") + v)
+                    act_v.setData(v)
+                vehicle_menu.addSeparator()
+                vehicle_menu.addAction("清除车辆标记").setData("")
         elif kind0 == MONTH:
             act_month = menu.addAction(f"🗑 删除整月数据…（{data0}）")
         sel_ids = self._selected_activity_ids()
@@ -967,6 +982,8 @@ class MainWindow(QMainWindow):
             self._delete_ids([item.data(0, Qt.UserRole)[1]], "确定删除这条记录？")
         elif chosen is act_commute:
             self._toggle_commute(data0, not self.db.get_activity(data0).get("commute"))
+        elif vehicle_menu is not None and chosen is not None and chosen.parent() is vehicle_menu:
+            self._set_activity_vehicle(data0, chosen.data())
         elif chosen is act_month:
             self._delete_months([data0])
         elif chosen is act_sel:
@@ -975,6 +992,19 @@ class MainWindow(QMainWindow):
             all_ids = [a["id"] for a in self.db.list_activities(limit=100000)]
             if all_ids:
                 self._delete_ids(all_ids, f"确定清空全部 {len(all_ids)} 条记录？此操作不可恢复！")
+
+    def _set_activity_vehicle(self, aid, vehicle):
+        """标记该次骑行骑的哪辆车（右键菜单），刷新列表与活动页。"""
+        self.db.set_activity_vehicle(aid, vehicle or "")
+        cur_aid = self._shown_activity_id
+        cur_month = self._cur_month
+        self.load_months()
+        if cur_month:
+            self.show_month(cur_month, force=True)
+        if cur_aid and self.db.get_activity(cur_aid):
+            self.show_activity(cur_aid, force=True)
+        self.statusBar().showMessage(
+            f"已标记骑行车辆：{vehicle}" if vehicle else "已清除车辆标记", 3000)
 
     def _toggle_commute(self, aid, flag):
         """标记/取消通勤（右键菜单），刷新列表与活动页。"""
@@ -1218,9 +1248,13 @@ class MainWindow(QMainWindow):
 
     # ---------------- 活动页 ----------------
     def stat_values(self, a):
-        return [
+        vals = [
             ("记录时间", fmt_dt(a.get("start_time"))),
             ("骑行类型", "🚴 通勤" if a.get("commute") else "训练"),
+        ]
+        if a.get("vehicle"):
+            vals.append(("骑行车辆", a["vehicle"]))
+        vals += [
             ("平均速度", kmh(a.get("avg_speed_ms"))),
             ("卡路里", f"{round(a['calories'])} kcal" if a.get("calories") is not None else "—"),
             ("最大速度", kmh(a.get("max_speed_ms"))),
@@ -1241,6 +1275,7 @@ class MainWindow(QMainWindow):
              f"{a['max_power']} W" if a.get("max_power") is not None else "—"),
             ("设备", a.get("device") or "—"),
         ]
+        return vals
 
     def show_activity(self, aid, force=False):
         act = self.db.get_activity(aid)
@@ -1804,6 +1839,40 @@ class MainWindow(QMainWindow):
         except Exception as e:
             log.exception("GPX 导出失败")
             QMessageBox.critical(self, "导出失败", str(e))
+
+    def export_excel_report(self):
+        """导出 Excel 报表：活动明细 + 月度汇总（P2-A）。"""
+        from datetime import date
+        default_name = f"骑行数据报表_{date.today().isoformat()}.xlsx"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "导出 Excel 报表", str(Path.home() / "Desktop" / default_name),
+            "Excel 工作簿 (*.xlsx)")
+        if not path:
+            return
+        try:
+            from core import excel_export
+            n = excel_export.export_excel(self.db, path)
+            self.statusBar().showMessage(f"Excel 报表已导出（{n} 条活动）: {Path(path).name}", 6000)
+            log.info("Excel 报表导出成功: %s", path)
+        except Exception as e:
+            log.exception("Excel 报表导出失败")
+            QMessageBox.critical(self, "导出失败", str(e))
+
+    def backup_database(self):
+        """备份数据库：选择目录 → fit_backup_时间戳.db（在线一致性快照）。"""
+        dest_dir = QFileDialog.getExistingDirectory(
+            self, "选择备份保存目录", str(Path.home() / "Desktop"))
+        if not dest_dir:
+            return
+        try:
+            from core import excel_export
+            dest = excel_export.backup_database(self.db.path, dest_dir)
+            size_mb = dest.stat().st_size / 1024 / 1024
+            self.statusBar().showMessage(f"数据库已备份: {dest.name}（{size_mb:.1f} MB）", 6000)
+            log.info("数据库备份成功: %s", dest)
+        except Exception as e:
+            log.exception("数据库备份失败")
+            QMessageBox.critical(self, "备份失败", str(e))
 
     def open_gear(self):
         """装备管家：台账 + 里程驱动的保养提醒。"""
