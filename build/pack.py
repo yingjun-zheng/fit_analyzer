@@ -13,12 +13,17 @@
   进程内事后设 os.environ 无效。所以所有会触发删除的子进程（清目录、PyInstaller）
   都通过 subprocess 的 env= 在「子进程启动前」传入 CODEBUDDY_SAFE_DELETE_ENABLED=0。
 """
+import datetime
+import json
 import os
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))  # 允许 pack.py 内部 import core（发布产物需要）
 VENV_PY = (
     ROOT / ".venv" / "Scripts" / "python.exe"
     if os.name == "nt" else ROOT / ".venv" / "bin" / "python"
@@ -26,6 +31,76 @@ VENV_PY = (
 SPEC = ROOT / "build" / "fit_analyzer.spec"
 DIST = ROOT / "dist"
 FINAL_NAME = "骑行FIT数据分析器"
+
+
+def parse_args(argv):
+    dry = "--dry-run" in argv
+    publish = None
+    notes = ""
+    for i, a in enumerate(argv):
+        if a == "--publish" and i + 1 < len(argv):
+            publish = Path(argv[i + 1])
+        elif a.startswith("--publish="):
+            publish = Path(a.split("=", 1)[1])
+        elif a == "--notes" and i + 1 < len(argv):
+            notes = argv[i + 1]
+    return dry, publish, notes
+
+
+def do_publish(out_dir: Path, notes: str):
+    """生成 latest.json + 增量包 zip（应用层文件，几 MB 级）。
+
+    增量包包含除 PySide6/shiboken6 依赖外的全部文件（exe + PYZ + 资源）；
+    依赖库变化由 deps_fingerprint 检测，届时客户端要求下载全量包。
+    """
+    from core import updater
+    from core.config import DEFAULTS
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    exe_dir = DIST / FINAL_NAME
+    version = DEFAULTS.get("version") or "0.0.0"
+    today = datetime.date.today().isoformat()
+
+    # 历史 changelog：从上次发布保留
+    changelog = []
+    prev = out_dir / "latest.json"
+    if prev.exists():
+        try:
+            old = json.loads(prev.read_text(encoding="utf-8"))
+            changelog = old.get("changelog") or []
+        except Exception:
+            pass
+    notes_list = [n.strip() for n in (notes or "").split(";") if n.strip()]
+    changelog.insert(0, {"version": version, "date": today, "notes": notes_list or ["本次发布"]})
+    changelog = changelog[:10]
+
+    # 增量包 zip（应用层文件，保持相对路径）
+    inc_name = f"update-{version}.zip"
+    inc_path = out_dir / inc_name
+    with zipfile.ZipFile(inc_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        rels = updater.app_layer_paths(exe_dir)
+        for rel in rels:
+            zf.write(exe_dir / rel, rel)
+    deps_fp = updater.deps_fingerprint(exe_dir)
+
+    manifest = {
+        "version": version,
+        "name": FINAL_NAME,
+        "published_at": today,
+        "deps_fingerprint": deps_fp,
+        "url_incremental": inc_name,
+        "sha256_incremental": updater.sha256_file(inc_path),
+        "size_incremental": inc_path.stat().st_size,
+        "changelog": changelog,
+    }
+    (out_dir / "latest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    inc_mb = inc_path.stat().st_size / 1024 / 1024
+    print(f"✅ 发布产物：{out_dir}")
+    print(f"   - {inc_name}（{inc_mb:.2f} MB，应用层 {len(rels)} 个文件）")
+    print(f"   - latest.json（version={version}，依赖指纹 {'✓' if deps_fp else '✗'}）")
+    print("   部署：把 latest.json + update-<version>.zip 放到静态托管/Gitee Releases 附件，")
+    print("         设置页填入 latest.json 的直链即可。")
 
 
 def kill_running_processes():
@@ -90,7 +165,7 @@ def safe_rmtree(path: Path):
 
 
 def main():
-    dry_run = "--dry-run" in sys.argv
+    dry_run, publish_dir, notes = parse_args(sys.argv)
 
     if not VENV_PY.exists():
         print("❌ 未找到虚拟环境 .venv，请先创建并安装依赖")
@@ -130,6 +205,10 @@ def main():
     else:
         print(f"\n⚠ 未找到 exe，请检查 {DIST / FINAL_NAME}")
         return 1
+
+    if publish_dir is not None:
+        print("\n== 3) 生成发布产物（增量更新包 + manifest）==")
+        do_publish(publish_dir, notes)
     return 0
 
 

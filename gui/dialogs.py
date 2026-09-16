@@ -140,6 +140,22 @@ class SettingsDialog(QDialog):
         plan_tip.setWordWrap(True)
         form.addRow(plan_tip)
 
+        # 软件更新（自更新引擎）
+        upd_title = QLabel("软件更新")
+        upd_title.setObjectName("h3")
+        form.addRow(upd_title)
+        self.edUpdateUrl = QLineEdit(d.get("update_url") or "")
+        self.edUpdateUrl.setPlaceholderText("https://example.com/fit/latest.json（build/pack.py --publish 产物）")
+        self.chkAutoUpdate = QCheckBox("启动后自动检查更新（发现新版本时提醒，不会自动下载）")
+        self.chkAutoUpdate.setChecked(bool(d.get("auto_check_update")))
+        form.addRow("更新源地址", self.edUpdateUrl)
+        form.addRow(self.chkAutoUpdate)
+        upd_tip = QLabel("发布：运行 build/pack.py --publish <目录> --notes \"更新说明\" 生成 latest.json 与增量包，"
+                         "上传到静态托管或 Gitee Releases 后，把 latest.json 直链填到上方。")
+        upd_tip.setObjectName("muted")
+        upd_tip.setWordWrap(True)
+        form.addRow(upd_tip)
+
         # 诊断与日志（面向排障/开发，一般用户无需使用）
         diag_title = QLabel("诊断与日志")
         diag_title.setObjectName("h3")
@@ -278,6 +294,8 @@ class SettingsDialog(QDialog):
             "amap_key": self.edAmapKey.text().strip(),
             "amap_security": self.edAmapSec.text().strip(),
             "amap_web_key": self.edAmapWebKey.text().strip(),
+            "update_url": self.edUpdateUrl.text().strip(),
+            "auto_check_update": self.chkAutoUpdate.isChecked(),
             "ssl_insecure_fallback": self.chkSslFallback.isChecked(),
         })
         # 让 SSL 降级开关立即生效（下次请求即按新配置），不必重启应用

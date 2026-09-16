@@ -46,6 +46,12 @@ DEFAULTS = {
     # HTTPS 证书校验失败时是否允许降级为不校验（代理/TLS 拦截网络应急用）。
     # 默认关闭以保证安全（API Key 等凭据不被中间人截获）；开启后降级重试会打 WARNING。
     "ssl_insecure_fallback": False,
+    # ---- 软件更新 ----
+    # 更新清单（latest.json）地址，支持 http(s):// 或 file://（本地模拟测试）。
+    # 为空 = 不检查更新。发布产物由 build/pack.py --publish 生成。
+    "update_url": "",
+    "auto_check_update": True,          # 启动后自动检查更新（仅提醒，不自动下载）
+    "ignored_update_version": "",       # 用户选择"忽略此版本"的版本号
 }
 
 _SENSITIVE = {"ai_api_key", "amap_security", "amap_web_key"}

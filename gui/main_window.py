@@ -9,7 +9,7 @@ import threading
 import time
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThread, Signal, Slot
+from PySide6.QtCore import Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -163,6 +163,7 @@ class MainWindow(QMainWindow):
 
         self._build_ui()
         self.load_months()
+        self._schedule_update_check()  # 启动 3 秒后静默检查更新
 
     # ---------------- UI 构建 ----------------
     def _build_ui(self):
@@ -247,8 +248,11 @@ class MainWindow(QMainWindow):
                          "显示 / 收起 AI 助手面板")
 
         m_help = mb.addMenu("帮助(&H)")
-        self._add_action(m_help, "⚙️ 设置…", self.open_settings, tip="统计区间 / AI / 高德 Key / 年度目标 / 诊断日志")
+        self._add_action(m_help, "⚙️ 设置…", self.open_settings, tip="统计区间 / AI / 高德 Key / 年度目标 / 更新源 / 诊断日志")
         self._add_action(m_help, "📂 打开数据目录", self.open_data_dir, tip="打开 fit.db 与日志所在文件夹")
+        m_help.addSeparator()
+        self._add_action(m_help, "🔄 检查更新…", self._check_update, tip="检查是否有新版本（需在设置中配置更新源）")
+        self._add_action(m_help, "📜 更新日志…", self.show_changelog, tip="查看各版本更新内容")
         m_help.addSeparator()
         self._add_action(m_help, "关于…", self.show_about)
 
@@ -289,8 +293,124 @@ class MainWindow(QMainWindow):
             "<p>免费、本地运行的骑行 FIT 数据离线分析软件（PySide6 原生界面，"
             "SQLite 本地存储，无浏览器、无本地服务）。</p>"
             "<p style='color:#7a8794'>数据目录：" + str(self.data_dir) + "</p>"
-            "<p style='color:#7a8794'>数据仅存本机；联网功能（AI/高德/海拔补全）"
+            "<p style='color:#7a8794'>数据仅存本机；联网功能（AI/高德/海拔补全/更新检查）"
             "均需自行配置且只在你主动使用时调用。</p>")
+
+    # ---------------- 软件更新（自更新引擎） ----------------
+    def _exe_dir(self):
+        """运行目录：打包后为 exe 所在目录（onedir）；源码运行时为项目根。"""
+        if getattr(sys, "frozen", False):
+            return Path(sys.executable).parent
+        return Path(__file__).resolve().parent.parent
+
+    def _schedule_update_check(self):
+        QTimer.singleShot(3000, self._check_update_auto)
+
+    def _check_update_auto(self):
+        if not self.config.get("auto_check_update") or not (self.config.get("update_url") or "").strip():
+            return
+        self._check_update()
+
+    def _check_update(self):
+        """后台检查更新；发现新版本弹窗让用户选择。"""
+        if getattr(self, "_update_checking", False):
+            return
+        if not (self.config.get("update_url") or "").strip():
+            QMessageBox.information(self, "检查更新",
+                                    "未配置更新源地址。\n请在「设置 → 软件更新」填入 latest.json 直链"
+                                    "（发布产物由 build/pack.py --publish 生成）。")
+            return
+        self._update_checking = True
+        self.statusBar().showMessage("正在检查更新…", 3000)
+        self._run_worker(self._do_check_update, self._on_check_update_done)
+
+    def _do_check_update(self):
+        from core import updater
+        return updater.check_for_update(
+            (self.config.get("update_url") or "").strip(), self._exe_dir(),
+            self.config.get("version"), self.config.get("ignored_update_version") or "")
+
+    def _on_check_update_done(self, ok, plan):
+        self._update_checking = False
+        if not plan:
+            if ok:
+                self.statusBar().showMessage("已是最新版本", 4000)
+            return
+        self._offer_update(plan)
+
+    def _offer_update(self, plan):
+        from gui.update_dialog import UpdateDialog
+        dlg = UpdateDialog(self.config.get("version"), plan, self)
+        dlg.exec()
+        choice = dlg.choice()
+        if choice == "ignore":
+            self.config.set("ignored_update_version", plan["manifest"].get("version"))
+            self.statusBar().showMessage("已忽略该版本，可在设置中重新开启检查", 5000)
+        elif choice == "update":
+            self._download_and_apply(plan)
+
+    def _download_and_apply(self, plan):
+        from gui.update_dialog import DownloadProgressDialog
+        from core import updater
+        exe_dir = self._exe_dir()
+        try:
+            stage = updater.stage_update_dir(exe_dir)
+            dest = stage.parent / f"update-{plan['manifest'].get('version')}.zip"
+        except Exception as e:
+            QMessageBox.warning(self, "更新失败", f"准备更新目录失败：{e}")
+            return
+        dlg = DownloadProgressDialog(self)
+        dlg.start_download(plan["url"], dest, plan.get("sha256") or "")
+        dlg.exec()
+        kind, info = dlg.result_info()
+        if kind != "ok":
+            return
+        try:
+            import zipfile
+            with zipfile.ZipFile(info) as zf:
+                zf.extractall(stage)
+            updater.apply_update_async(exe_dir)
+            QApplication.instance().quit()  # 主进程退出，helper 接管替换并重启
+        except Exception as e:
+            QMessageBox.warning(self, "更新失败", f"应用更新失败：{e}")
+
+    def show_changelog(self):
+        """更新日志：后台拉取清单展示各版本更新内容。"""
+        if not (self.config.get("update_url") or "").strip():
+            QMessageBox.information(self, "更新日志",
+                                    "未配置更新源地址，无法获取更新日志。\n请在「设置 → 软件更新」填入 latest.json 直链。")
+            return
+        from gui.update_dialog import changelog_to_html
+        from PySide6.QtWidgets import QDialog, QTextBrowser, QVBoxLayout, QPushButton, QHBoxLayout
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("更新日志")
+        dlg.setMinimumSize(440, 360)
+        lay = QVBoxLayout(dlg)
+        browser = QTextBrowser()
+        browser.setHtml("正在获取更新日志…")
+        lay.addWidget(browser, 1)
+        row = QHBoxLayout()
+        btn = QPushButton("关闭")
+        btn.clicked.connect(dlg.accept)
+        row.addStretch(1)
+        row.addWidget(btn)
+        lay.addLayout(row)
+
+        def on_done(ok, manifest):
+            if ok and manifest:
+                browser.setHtml(changelog_to_html(manifest.get("changelog")))
+            else:
+                browser.setHtml(f"<p style='color:#e05b5b'>获取更新日志失败：{'连接失败' if not ok else '清单无日志'}</p>")
+        self._run_worker(lambda: self._fetch_manifest_worker(), on_done)
+        dlg.exec()
+
+    def _fetch_manifest_worker(self):
+        from core import updater
+        try:
+            return updater.fetch_manifest((self.config.get("update_url") or "").strip())
+        except Exception:
+            return None
 
     def _card(self):
         f = QFrame()
