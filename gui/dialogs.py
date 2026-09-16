@@ -15,6 +15,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from pathlib import Path
+
 from core import logging_setup
 
 
@@ -139,6 +141,30 @@ class SettingsDialog(QDialog):
         plan_tip.setObjectName("muted")
         plan_tip.setWordWrap(True)
         form.addRow(plan_tip)
+
+        # 离线推送（Webhook 群机器人 + Windows 计划任务）
+        push_title = QLabel("离线推送（5.5）")
+        push_title.setObjectName("h3")
+        form.addRow(push_title)
+        from PySide6.QtWidgets import QPlainTextEdit
+        self.edWebhooks = QPlainTextEdit(str(d.get("webhook_urls") or "").replace(",", "\n"))
+        self.edWebhooks.setPlaceholderText("每行一个群机器人 Webhook 地址，支持：\n"
+                                           "· 飞书群机器人\n· 企业微信群机器人\n· 钉钉群机器人")
+        self.edWebhooks.setFixedHeight(70)
+        form.addRow("Webhook 地址", self.edWebhooks)
+        task_row = QHBoxLayout()
+        self.btnTaskInstall = QPushButton("安装计划任务（每天 08:00 离线检查）")
+        self.btnTaskInstall.clicked.connect(self._install_task)
+        self.btnTaskRemove = QPushButton("卸载计划任务")
+        self.btnTaskRemove.clicked.connect(self._remove_task)
+        task_row.addWidget(self.btnTaskInstall)
+        task_row.addWidget(self.btnTaskRemove)
+        form.addRow(task_row)
+        task_tip = QLabel("安装后即使软件未打开，计划任务也会在指定时间唤起离线检查，"
+                          "把新提醒/周报推送到 Webhook 群。")
+        task_tip.setObjectName("muted")
+        task_tip.setWordWrap(True)
+        form.addRow(task_tip)
 
         # 提醒与通知（阈值预警引擎）
         note_title = QLabel("提醒与通知")
@@ -287,6 +313,47 @@ class SettingsDialog(QDialog):
         except (TypeError, ValueError):
             return default
 
+    # ---- 离线推送：Windows 计划任务（schtasks） ----
+    def _task_name(self):
+        return "FitAnalyzer-DailyCheck"
+
+    def _task_command(self):
+        """计划任务执行命令：当前 exe + --headless-check（未打包时用 python）。"""
+        import sys
+        if getattr(sys, "frozen", False):
+            exe = f'"{Path(sys.executable)}"'
+        else:
+            exe = f'"{Path(sys.executable)}" "{Path(__file__).resolve().parent.parent / "app.py"}"'
+        return exe + " --headless-check"
+
+    def _install_task(self):
+        import subprocess
+        cmd = ["schtasks", "/create", "/tn", self._task_name(), "/tr",
+               self._task_command(), "/sc", "daily", "/st", "08:00", "/f"]
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            self._task_feedback(r.returncode == 0, r.stdout + r.stderr, "安装")
+        except Exception as e:  # noqa: BLE001
+            self._task_feedback(False, str(e), "安装")
+
+    def _remove_task(self):
+        import subprocess
+        cmd = ["schtasks", "/delete", "/tn", self._task_name(), "/f"]
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            self._task_feedback(r.returncode == 0, r.stdout + r.stderr, "卸载")
+        except Exception as e:  # noqa: BLE001
+            self._task_feedback(False, str(e), "卸载")
+
+    def _task_feedback(self, ok, detail, action):
+        from PySide6.QtWidgets import QMessageBox
+        if ok:
+            QMessageBox.information(self, f"计划任务{action}成功",
+                                    f"计划任务「{self._task_name()}」已{action}。\n"
+                                    f"任务命令：{self._task_command()}")
+        else:
+            QMessageBox.warning(self, f"计划任务{action}失败", detail)
+
     def _save(self):
         try:
             hr_max = int(self.edHrMax.text().strip() or "0")
@@ -349,6 +416,8 @@ class SettingsDialog(QDialog):
             "weekly_report_enabled": self.chkWeekly.isChecked(),
             "weekly_report_weekday": self.cmbWeekday.currentText(),
             "weekly_report_time": self.edWeeklyTime.text().strip() or "21:00",
+            "webhook_urls": "\n".join(
+                [ln.strip() for ln in self.edWebhooks.toPlainText().splitlines() if ln.strip()]),
             "ssl_insecure_fallback": self.chkSslFallback.isChecked(),
         })
         # 让 SSL 降级开关立即生效（下次请求即按新配置），不必重启应用

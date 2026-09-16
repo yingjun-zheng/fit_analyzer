@@ -101,9 +101,10 @@ def build_alerts(db, config):
 
 
 def run_alerts(db, config):
-    """检测并入库新提醒；返回本次新触发的提醒列表（供 UI 弹出气泡）。
+    """检测并入库新提醒；返回本次新触发的提醒列表（供 UI 弹气泡）。
 
     重复检测安全：同一 (kind, target) 只会入库一次（INSERT OR IGNORE）。
+    配置了 webhook_urls 时，新提醒同步推送到群机器人（尽力而为）。
     """
     if not config.get("notifications_enabled"):
         return []
@@ -115,4 +116,19 @@ def run_alerts(db, config):
     if new_alerts:
         log.info("提醒引擎：新增 %d 条提醒 %s",
                  len(new_alerts), [a["kind"] for a in new_alerts])
+        # 5.5：同步推送到已配置的群机器人 Webhook（飞书/企微/钉钉）
+        if _webhook_configured(config):
+            try:
+                from . import notify_channels
+                notify_channels.push_alerts(config, new_alerts)
+            except Exception:  # noqa: BLE001
+                log.exception("Webhook 推送提醒异常")
     return new_alerts
+
+
+def _webhook_configured(config):
+    try:
+        from . import notify_channels
+        return bool(notify_channels.webhook_urls(config))
+    except Exception:
+        return False

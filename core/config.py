@@ -60,6 +60,11 @@ DEFAULTS = {
     "weekly_report_enabled": True,      # 每周定时生成训练周报
     "weekly_report_weekday": "周日",    # 周一~周日
     "weekly_report_time": "21:00",      # 24 小时制 HH:MM
+    # ---- 离线推送（5.5） ----
+    # 群机器人 Webhook 地址（飞书/企业微信/钉钉），多个用逗号分隔；
+    # 配置后提醒与周报会同步推送到群（配合计划任务可实现离线推送）
+    "webhook_urls": "",
+    "offline_task_installed": False,    # 是否已安装 Windows 计划任务（离线检查）
 }
 
 _SENSITIVE = {"ai_api_key", "amap_security", "amap_web_key"}

@@ -24,6 +24,11 @@ A free, local, offline **cycling FIT data analysis tool** (pure desktop Windows 
 - **Ride safety analysis**: heuristic detection of sudden stops / suspected crashes (sharp speed drop + prolonged stillness)
 - **3D route view**: grade-colored 3D route (green→yellow→red) + altitude curtain, shown in route analysis
 - **AI data analysis**: connect to a local AI (Ollama / LM Studio / vLLM) or any OpenAI-compatible remote model (DeepSeek etc., with your own key) to generate per-activity analysis reports and monthly training summaries
+- **AI training assistant (floating sidebar)**: always-available floating panel (Ctrl+B), one-click monthly summary + free-form Q&A with multi-turn conversation, cross-month follow-ups, streaming output; 10 data tools (monthly / load / comparison / fitness / gear) auto-invoked — the AI can even take actions (set FTP / set yearly goal / add gear) with a confirmation dialog before executing
+- **Proactive alerts (threshold warnings + weekly report)**: auto-detected after imports — TSB deep fatigue (rest advice), gear at lifespan (70% watch / 100% replace), yearly-goal milestones; tray popups + a reminder center (🔔 unread badge) + missed-notification catch-up on launch
+- **Scheduled weekly report**: generated automatically at a configurable weekday + time (this week vs last week + CTL/ATL/TSB + next-week advice) with coach-style AI wording; falls back to a deterministic template without AI
+- **Webhook group push + scheduled task**: alerts/reports can be pushed to Feishu / WeCom / DingTalk group bots; install a Windows scheduled task to run offline checks and push even when the app is closed
+- **Self-update engine**: check for updates (auto on launch / manual), update changelog, incremental package download (app-layer files only, a few MB) verified by sha256, auto-replaced and restarted; publishing is one command with `build/pack.py --publish`
 - **GPX export**: export a single activity as GPX 1.1 (with Garmin TrackPointExtension: HR / cadence / temperature / speed / power), compatible with Strava / Garmin Connect / XOSS
 - Built-in **logging system** (rolling files + in-app live view)
 
@@ -85,7 +90,11 @@ Settings → AI:
 
 Once enabled:
 - Single activity → "Generate AI analysis report": overall assessment, intensity/rhythm analysis (HR zones / speed distribution), problems and training advice
-- Monthly view → "AI monthly summary": training volume, intensity structure, consistency, next-month advice
+- **AI training assistant** on the right (toolbar "🤖 AI assistant" or Ctrl+B):
+  - "📝 Summarize month" one-click summary; free-form Q&A in the input box (Enter to send)
+  - **Multi-turn conversation**: follow up with "what about August?" or "more detail"; resets automatically when switching months; "🆕" starts a new session
+  - **Streaming output**: answers appear word by word; tool calls shown live (🔍 Query monthly overview ✅)
+  - **Let the AI act**: "set my FTP to 250W" / "add a chain to my gear" → confirmation dialog, then applied
 - Activity detail → "Smart review" (top of the AI analysis tab): triggered by one sentence, auto-routed to 6 analysis types
 
 All AI calls go through your configured endpoint. The app does not include any paid interface; the key is stored locally and masked.
@@ -161,6 +170,29 @@ Toolbar "🔧 Gear manager" keeps a consumables ledger (chain / cassette / chain
 - After replacing/servicing, click "**Reset**" to restart the clock from today; unused gear can be "**retired**" (no more reminders, mileage counted up to the retirement date)
 - v1 counts mileage across all activities (not per bike); multi-bike users can keep separate entries (e.g. "road bike - chain", "MTB - chain")
 
+## Proactive alerts (threshold warnings + weekly report + group push)
+
+The app goes from "you come to it" to "it comes to you":
+
+- **Threshold warnings (auto-detected on import / launch)**:
+  - ⚠️ **TSB deep fatigue**: TSB ≤ threshold (default -30, adjustable in Settings) → rest advice
+  - 🔧 **Gear maintenance**: reminded once at 70% (watch) and once at 100% (due); restarts after a maintenance reset
+  - 🎯 **Yearly-goal milestones**: one reminder at each 25/50/75/100%
+- **Delivery channels**:
+  - System tray popups (while running) + toolbar "🔔 Reminders" unread badge
+  - **Reminder center**: unread list (bold) / double-click to read / mark all read / clear
+  - **Missed catch-up**: unread count summarized in a popup when the app reopens
+- **Scheduled weekly report**: Settings → Weekly report (weekday + time); at the due time a report ("this week vs last week + CTL/ATL/TSB + next-week advice") is generated and pushed; the full text also lands in the reminder center and is injected into the AI assistant session (follow-ups work); Help → "Generate weekly report…" gives a manual preview
+- **Webhook group push**: Settings → Offline push, paste Feishu / WeCom / DingTalk group-bot webhook URLs; alerts and reports are pushed to the group automatically (message format auto-detected per platform)
+- **Windows scheduled task (offline push)**: one-click "install daily 08:00 offline check" in Settings — even when the app is closed, the task wakes `--headless-check` to detect new alerts/reports and push them to the group
+
+## Software update (self-update engine)
+
+- Silent check 3 seconds after launch (can be disabled); Help → "Check for updates…" for manual checks; when a new version is found a dialog shows the **changelog** with "Update now / Later / Ignore this version"
+- The update package is an **incremental bundle** (app-layer files only, usually a few MB); verified by sha256, then replaced and restarted automatically; a dependency (PySide6) change triggers a full-package download
+- **Publishing**: `build/pack.py --publish <dir> --notes "note1;note2"` produces `latest.json` (version / dependency fingerprint / download URL / changelog) + `update-<version>.zip`; upload both to a Gitee Release attachment or any static host, then paste the `latest.json` direct link into Settings
+- Help → "📜 Changelog…" shows release history anytime
+
 ## 4. Statistics methodology
 
 - **HR zones**: 5 zones by % of max HR (default 60/70/80/90%); max HR is taken from data or manually overridden; activities without HR data auto-hide HR analysis
@@ -195,6 +227,12 @@ The "Track" page supports two modes, auto-switched:
 
 ```powershell
 .\.venv\Scripts\python.exe build\pack.py
+```
+
+**Publish an update package (latest.json + incremental bundle)**:
+
+```powershell
+.\.venv\Scripts\python.exe build\pack.py --publish release --notes "note one;note two"
 ```
 
 Alternative: original PowerShell script

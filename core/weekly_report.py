@@ -165,6 +165,12 @@ def store_weekly_report(db, config, ai=None, today=None):
     if not inserted:
         return None, data
     log.info("周报已生成并入库存档（窗口 %s）", this_start)
+    # 5.5：配置了 Webhook 时同步推送周报到群机器人
+    try:
+        from . import notify_channels
+        notify_channels.push_text(config, "📊 本周训练周报", text)
+    except Exception:  # noqa: BLE001
+        log.exception("Webhook 推送周报异常")
     return {"kind": "weekly", "title": "📊 本周训练周报", "body": text}, data
 
 

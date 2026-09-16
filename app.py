@@ -34,6 +34,47 @@ def list_backgrounds():
     return [str(fallback)] if Path(fallback).exists() else []
 
 
+def _run_headless_check(data_dir_arg):
+    """离线检查（计划任务）：不启动界面，检测阈值提醒 + 周报到点并推送，然后退出。
+
+    周报走确定性模板（不调 AI，保证离线快速稳定）；已配置 Webhook 时
+    提醒/周报会自动推送（notifier / weekly_report 内建）。
+    """
+    import datetime
+    from pathlib import Path
+
+    from core import logging_setup
+    from core import notifier, weekly_report
+    from core.config import Config
+    from core import db as db_mod
+
+    data_dir = Path(data_dir_arg) if data_dir_arg else default_data_dir()
+    data_dir.mkdir(parents=True, exist_ok=True)
+    logging_setup.setup_logging(data_dir, console=True)
+    config = Config(data_dir / "config.json")
+    db = db_mod.DB(data_dir / "fit.db")
+
+    log = logging.getLogger("fit.headless")
+    log.info("离线检查开始（活动数 %d）", db.count())
+
+    # 1) 阈值提醒（含 Webhook 推送）
+    new_alerts = notifier.run_alerts(db, config)
+    for a in new_alerts:
+        log.info("新提醒：%s - %s", a.get("title"), (a.get("body") or "")[:60])
+
+    # 2) 周报到点 → 生成并推送（模板文本，无 AI 依赖）
+    if weekly_report.due_for_weekly_report(config):
+        note, _ = weekly_report.store_weekly_report(db, config, ai=None)
+        if note:
+            log.info("周报已生成（离线模式）")
+        else:
+            log.info("周报窗口已生成过，跳过")
+
+    db.close()
+    log.info("离线检查结束")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description=APP_NAME)
     parser.add_argument("--data-dir", default=None, help="数据目录（默认 %APPDATA%/FitAnalyzer）")
@@ -42,7 +83,12 @@ def main():
     parser.add_argument("--import-dir", default=None,
                         help="自检模式：从此目录导入 FIT（未指定时尝试环境变量 FITANALYZER_TEST_DATA）")
     parser.add_argument("--quit-test", action="store_true", help="离屏启动后 2 秒自动退出（验证正常退出路径）")
+    parser.add_argument("--headless-check", action="store_true",
+                        help="离线检查模式（供 Windows 计划任务）：不启动界面，检测提醒/周报并推送后退出")
     args = parser.parse_args()
+
+    if args.headless_check:
+        return _run_headless_check(args.data_dir)
 
     # 离屏自检需要 offscreen 平台
     if args.selftest:
