@@ -346,6 +346,24 @@ class DB:
         self.conn.execute("DELETE FROM gear WHERE id=?", (gid,))
         self.conn.commit()
 
+    @_locked
+    def delete_month(self, month):
+        """删除整月活动（含记圈/逐条记录）。返回删除的活动条数。
+        显式先删子表再删主表：比依赖外键逐行级联快得多
+        （一条活动可达数万条 records，整月级联会显著卡顿）。
+        """
+        self.conn.execute(
+            "DELETE FROM records WHERE activity_id IN (SELECT id FROM activities WHERE month=?)",
+            (month,))
+        self.conn.execute(
+            "DELETE FROM laps WHERE activity_id IN (SELECT id FROM activities WHERE month=?)",
+            (month,))
+        cur = self.conn.execute("DELETE FROM activities WHERE month=?", (month,))
+        self.conn.commit()
+        n = cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
+        log.info("删除整月 %s：%d 条活动", month, n)
+        return n
+
     # ---------------- 通知（提醒引擎数据层） ----------------
     @_locked
     def insert_notification(self, kind, target, title, body):
