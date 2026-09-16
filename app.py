@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 APP_NAME = "骑行FIT数据分析器"
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 
 
 def resource_path(rel):
