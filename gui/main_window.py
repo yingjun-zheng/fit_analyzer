@@ -163,7 +163,10 @@ class MainWindow(QMainWindow):
 
         self._build_ui()
         self.load_months()
+        self._init_tray()
+        self._start_weekly_scheduler()
         self._schedule_update_check()  # 启动 3 秒后静默检查更新
+        self._schedule_alerts()        # 启动 4 秒后检测一次阈值提醒
 
     # ---------------- UI 构建 ----------------
     def _build_ui(self):
@@ -253,6 +256,7 @@ class MainWindow(QMainWindow):
         m_help.addSeparator()
         self._add_action(m_help, "🔄 检查更新…", self._check_update, tip="检查是否有新版本（需在设置中配置更新源）")
         self._add_action(m_help, "📜 更新日志…", self.show_changelog, tip="查看各版本更新内容")
+        self._add_action(m_help, "📊 生成周报…", self.show_weekly_report, tip="手动生成本周训练周报预览")
         m_help.addSeparator()
         self._add_action(m_help, "关于…", self.show_about)
 
@@ -267,6 +271,7 @@ class MainWindow(QMainWindow):
                 ("🗑 删除", self.delete_selected, "删除左侧选中的活动记录（可多选，快捷键 Del）"),
                 ("📤 导出 GPX", self.export_gpx, "把当前选中的活动导出为 GPX"),
                 ("🤖 AI 助手", self.toggle_ai_panel, "显示 / 收起 AI 助手面板（Ctrl+B）"),
+                ("🔔 提醒", self.open_reminder_center, "查看未读提醒（阈值预警 / 周报）"),
                 None,
                 ("🧭 路径规划", self.open_plan, "高德地图点击选点，逐段规划骑行路线"),
                 ("✨ 自动规划", self.open_auto_plan, "一句话自动生成长途路书（分段接力 + 休息点）"),
@@ -281,6 +286,8 @@ class MainWindow(QMainWindow):
             act = QAction(text, self)
             act.setToolTip(tip)
             act.setStatusTip(tip)
+            if text.startswith("🔔"):
+                self._bell_btn = act  # 保存铃铛按钮引用，用于未读角标刷新
             act.triggered.connect(slot)
             tb.addAction(act)
         self.addToolBar(tb)
@@ -709,8 +716,107 @@ class MainWindow(QMainWindow):
         return tabs
 
     def closeEvent(self, e):
-        """关闭窗口即退出。"""
+        """关闭窗口：配置了「最小化到托盘」且托盘可用时隐藏到托盘，否则退出。"""
+        if (self.config.get("close_to_tray")
+                and getattr(self, "_tray", None) is not None
+                and self._tray.available):
+            e.ignore()
+            self.hide()
+            self._tray.notify("已最小化到托盘",
+                              "软件仍在后台运行，右键托盘图标可退出。")
+            return
         QApplication.instance().quit()
+
+    # ---------------- 系统托盘与主动提醒 ----------------
+    def _init_tray(self):
+        from gui.tray import TrayNotifier
+        self._tray = TrayNotifier(self, make_app_icon())
+
+    def _schedule_alerts(self):
+        QTimer.singleShot(4000, self._run_alerts_auto)
+        QTimer.singleShot(5000, self._catchup_unread)  # 错过补发
+
+    def _run_alerts_auto(self):
+        """启动后检测一次阈值提醒（新提醒弹气泡；无托盘环境仅入库）。"""
+        if getattr(self, "_tray", None) is not None:
+            self._tray.run_alerts_async(self._refresh_bell)
+
+    def _catchup_unread(self):
+        """错过补发：启动时若有未读提醒，弹汇总气泡（点击打开提醒中心）。"""
+        if getattr(self, "_tray", None) is None:
+            self._refresh_bell()
+            return
+        n = self._tray.unread_count()
+        self._refresh_bell()
+        if n > 0:
+            self._tray.notify("🔔 你有未读提醒",
+                              f"共 {n} 条未读（训练负荷 / 装备 / 周报）。点击查看。",
+                              on_click=self.open_reminder_center)
+
+    def _refresh_bell(self, *_):
+        """刷新工具栏铃铛未读数角标。"""
+        btn = getattr(self, "_bell_btn", None)
+        if btn is None:
+            return
+        n = self._tray.unread_count() if getattr(self, "_tray", None) else 0
+        btn.setText(f"🔔 提醒({n})" if n else "🔔 提醒")
+
+    def open_reminder_center(self):
+        from gui.notification_center import ReminderCenterDialog
+        dlg = ReminderCenterDialog(self.db, self)
+        dlg.exec()
+        self._refresh_bell()
+
+    def _run_alerts_now(self):
+        """导入完成后调用：立即检测提醒。"""
+        if getattr(self, "_tray", None) is not None:
+            self._tray.run_alerts_async(self._refresh_bell)
+
+    # ---------------- 定时周报 ----------------
+    def _start_weekly_scheduler(self):
+        from core.scheduler import WeeklyScheduler
+        self._weekly_scheduler = WeeklyScheduler(self.config, self._generate_weekly_report_now)
+        self._weekly_scheduler.start()
+
+    def _generate_weekly_report_now(self):
+        """到点/手动触发：后台生成周报 → 气泡 + 注入 AI 会话。"""
+        if getattr(self, "_weekly_busy", False):
+            return
+        self._weekly_busy = True
+        self._run_worker(self._do_weekly_report, self._on_weekly_report_done)
+
+    def _do_weekly_report(self):
+        from core import weekly_report
+        ai = self._ai_client() if self.config.get("ai_enabled") else None
+        note, _data = weekly_report.store_weekly_report(self.db, self.config, ai=ai)
+        return note
+
+    def _on_weekly_report_done(self, ok, note):
+        self._weekly_busy = False
+        if not ok or not note:
+            return
+        if getattr(self, "_tray", None) is not None:
+            self._tray.notify(note["title"], note["body"])
+        if hasattr(self, "ai_panel"):
+            self.ai_panel.inject_context(note["title"], note["body"])
+        self.statusBar().showMessage("📊 本周训练周报已生成", 6000)
+
+    def show_weekly_report(self):
+        """手动入口：生成周报并弹窗预览（不写入通知，可反复生成）。"""
+        self._run_worker(self._do_weekly_preview, self._on_weekly_preview_done)
+
+    def _do_weekly_preview(self):
+        from core import weekly_report
+        ai = self._ai_client() if self.config.get("ai_enabled") else None
+        text, data = weekly_report.generate_weekly_report(ai, self.db, self.config)
+        return text, data["window"]["this_start"]
+
+    def _on_weekly_preview_done(self, ok, payload):
+        if not ok:
+            QMessageBox.warning(self, "周报生成失败", str(payload))
+            return
+        text, this_start = payload
+        QMessageBox.information(self, f"📊 本周训练周报（{this_start} 起 7 天）", text)
 
     # ---------------- AI 助手浮层（覆盖式，不挤压中央布局） ----------------
     def toggle_ai_panel(self):
@@ -1519,6 +1625,9 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "导入完成（部分失败）", f"{msg}\n\n{detail}")
         self.statusBar().showMessage(msg, 8000)
         self.load_months()
+        # 导入新数据后立即检测阈值提醒（TSB/装备/年度目标）
+        if payload.get("imported") or payload.get("updated"):
+            self._run_alerts_now()
 
     # ---------------- AI ----------------
     def _ai_client(self):

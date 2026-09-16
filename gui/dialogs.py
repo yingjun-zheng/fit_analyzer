@@ -140,6 +140,25 @@ class SettingsDialog(QDialog):
         plan_tip.setWordWrap(True)
         form.addRow(plan_tip)
 
+        # 提醒与通知（阈值预警引擎）
+        note_title = QLabel("提醒与通知")
+        note_title.setObjectName("h3")
+        form.addRow(note_title)
+        self.chkNotify = QCheckBox("启用阈值预警（TSB 深度疲劳 / 装备保养 / 年度目标里程碑）")
+        self.chkNotify.setChecked(bool(d.get("notifications_enabled")))
+        self.edTsbThreshold = QLineEdit(str(d.get("notifications_tsb_threshold") or -30))
+        self.edTsbThreshold.setFixedWidth(70)
+        tsb_row = QHBoxLayout()
+        tsb_row.addWidget(QLabel("TSB 疲劳预警阈值 ≤"))
+        tsb_row.addWidget(self.edTsbThreshold)
+        tsb_row.addStretch(1)
+        form.addRow(self.chkNotify)
+        form.addRow(tsb_row)
+        note_tip = QLabel("提醒会弹托盘气泡并存入「🔔 提醒中心」；未读提醒在下次打开软件时汇总提示。")
+        note_tip.setObjectName("muted")
+        note_tip.setWordWrap(True)
+        form.addRow(note_tip)
+
         # 软件更新（自更新引擎）
         upd_title = QLabel("软件更新")
         upd_title.setObjectName("h3")
@@ -148,8 +167,29 @@ class SettingsDialog(QDialog):
         self.edUpdateUrl.setPlaceholderText("https://example.com/fit/latest.json（build/pack.py --publish 产物）")
         self.chkAutoUpdate = QCheckBox("启动后自动检查更新（发现新版本时提醒，不会自动下载）")
         self.chkAutoUpdate.setChecked(bool(d.get("auto_check_update")))
+        self.chkCloseToTray = QCheckBox("关闭窗口时最小化到系统托盘（后台继续运行，右键托盘图标退出）")
+        self.chkCloseToTray.setChecked(bool(d.get("close_to_tray")))
         form.addRow("更新源地址", self.edUpdateUrl)
         form.addRow(self.chkAutoUpdate)
+        form.addRow(self.chkCloseToTray)
+        # 定时周报
+        from PySide6.QtWidgets import QComboBox
+        self.chkWeekly = QCheckBox("每周定时生成训练周报")
+        self.chkWeekly.setChecked(bool(d.get("weekly_report_enabled")))
+        self.cmbWeekday = QComboBox()
+        self.cmbWeekday.addItems(["周一", "周二", "周三", "周四", "周五", "周六", "周日"])
+        idx = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"].index(
+            d.get("weekly_report_weekday", "周日"))
+        self.cmbWeekday.setCurrentIndex(idx)
+        self.edWeeklyTime = QLineEdit(str(d.get("weekly_report_time") or "21:00"))
+        self.edWeeklyTime.setPlaceholderText("HH:MM，如 21:00")
+        weekly_row = QHBoxLayout()
+        weekly_row.addWidget(QLabel("每周"))
+        weekly_row.addWidget(self.cmbWeekday)
+        weekly_row.addWidget(QLabel(" 时间"))
+        weekly_row.addWidget(self.edWeeklyTime, 1)
+        weekly_row.addWidget(self.chkWeekly, 0)
+        form.addRow(weekly_row)
         upd_tip = QLabel("发布：运行 build/pack.py --publish <目录> --notes \"更新说明\" 生成 latest.json 与增量包，"
                          "上传到静态托管或 Gitee Releases 后，把 latest.json 直链填到上方。")
         upd_tip.setObjectName("muted")
@@ -240,6 +280,13 @@ class SettingsDialog(QDialog):
         if self._on_reidentify is not None:
             self._on_reidentify()
 
+    @staticmethod
+    def _parse_float(text, default):
+        try:
+            return float(str(text).strip())
+        except (TypeError, ValueError):
+            return default
+
     def _save(self):
         try:
             hr_max = int(self.edHrMax.text().strip() or "0")
@@ -296,6 +343,12 @@ class SettingsDialog(QDialog):
             "amap_web_key": self.edAmapWebKey.text().strip(),
             "update_url": self.edUpdateUrl.text().strip(),
             "auto_check_update": self.chkAutoUpdate.isChecked(),
+            "close_to_tray": self.chkCloseToTray.isChecked(),
+            "notifications_enabled": self.chkNotify.isChecked(),
+            "notifications_tsb_threshold": self._parse_float(self.edTsbThreshold.text(), -30),
+            "weekly_report_enabled": self.chkWeekly.isChecked(),
+            "weekly_report_weekday": self.cmbWeekday.currentText(),
+            "weekly_report_time": self.edWeeklyTime.text().strip() or "21:00",
             "ssl_insecure_fallback": self.chkSslFallback.isChecked(),
         })
         # 让 SSL 降级开关立即生效（下次请求即按新配置），不必重启应用

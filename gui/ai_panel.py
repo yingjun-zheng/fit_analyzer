@@ -239,6 +239,12 @@ class AiAssistantPanel(QWidget):
         self._set_text("已开启新对话，开始提问吧～")
         self._mw.statusBar().showMessage("AI 会话已重置", 3000)
 
+    def inject_context(self, title, text):
+        """外部注入上下文（如定时周报）进会话历史——之后可追问「周报里说的建议是什么」。"""
+        if not (title or "").strip() or not (text or "").strip():
+            return
+        self.history = month_agent.append_round(self.history, title, text)
+
     # ---------------- 流式渲染 ----------------
     def _set_text(self, text):
         self.output.setPlainText(text)

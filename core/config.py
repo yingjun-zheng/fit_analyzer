@@ -52,6 +52,14 @@ DEFAULTS = {
     "update_url": "",
     "auto_check_update": True,          # 启动后自动检查更新（仅提醒，不自动下载）
     "ignored_update_version": "",       # 用户选择"忽略此版本"的版本号
+    # ---- 提醒（阈值预警引擎） ----
+    "notifications_enabled": True,      # 总开关：导入新数据/每日首次打开时检测并提醒
+    "notifications_tsb_threshold": -30, # TSB 低于该值提醒休息（越负越疲劳）
+    "close_to_tray": False,             # 关闭窗口时最小化到托盘（需系统支持托盘）
+    # ---- 定时周报 ----
+    "weekly_report_enabled": True,      # 每周定时生成训练周报
+    "weekly_report_weekday": "周日",    # 周一~周日
+    "weekly_report_time": "21:00",      # 24 小时制 HH:MM
 }
 
 _SENSITIVE = {"ai_api_key", "amap_security", "amap_web_key"}

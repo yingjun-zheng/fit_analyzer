@@ -78,6 +78,17 @@ CREATE TABLE IF NOT EXISTS gear (
     retired INTEGER DEFAULT 0,
     retired_ts INTEGER
 );
+
+CREATE TABLE IF NOT EXISTS notifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL,
+    target TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    created_ts INTEGER NOT NULL,
+    read INTEGER DEFAULT 0,
+    UNIQUE(kind, target)
+);
 """
 
 
@@ -331,28 +342,44 @@ class DB:
         return [dict(r) for r in rows]
 
     @_locked
-    def delete_activity(self, aid):
-        self.conn.execute("DELETE FROM activities WHERE id=?", (aid,))
+    def gear_delete(self, gid):
+        self.conn.execute("DELETE FROM gear WHERE id=?", (gid,))
+        self.conn.commit()
+
+    # ---------------- 通知（提醒引擎数据层） ----------------
+    @_locked
+    def insert_notification(self, kind, target, title, body):
+        """插入提醒；同类目标已存在（UNIQUE(kind,target)）则忽略。返回是否新插入。"""
+        cur = self.conn.execute(
+            "INSERT OR IGNORE INTO notifications (kind, target, title, body, created_ts)"
+            " VALUES (?,?,?,?,?)",
+            (kind, target, title, body, int(datetime.now().timestamp())))
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    @_locked
+    def list_notifications(self, unread_only=False, limit=50):
+        sql = "SELECT * FROM notifications"
+        if unread_only:
+            sql += " WHERE read=0"
+        sql += " ORDER BY id DESC LIMIT ?"
+        return [dict(r) for r in self.conn.execute(sql, (limit,))]
+
+    @_locked
+    def mark_notifications_read(self, ids=None):
+        if ids:
+            self.conn.executemany("UPDATE notifications SET read=1 WHERE id=?", [(i,) for i in ids])
+        else:
+            self.conn.execute("UPDATE notifications SET read=1")
         self.conn.commit()
 
     @_locked
-    def delete_month(self, month):
-        """删除整月活动（含记圈/逐条记录）。返回删除的活动条数。
-
-        显式先删子表再删主表：比依赖外键逐行级联快得多
-        （一条活动可达数万条 records，整月级联会显著卡顿）。
-        """
-        self.conn.execute(
-            "DELETE FROM records WHERE activity_id IN (SELECT id FROM activities WHERE month=?)",
-            (month,))
-        self.conn.execute(
-            "DELETE FROM laps WHERE activity_id IN (SELECT id FROM activities WHERE month=?)",
-            (month,))
-        cur = self.conn.execute("DELETE FROM activities WHERE month=?", (month,))
+    def clear_notifications(self, ids=None):
+        if ids:
+            self.conn.executemany("DELETE FROM notifications WHERE id=?", [(i,) for i in ids])
+        else:
+            self.conn.execute("DELETE FROM notifications")
         self.conn.commit()
-        n = cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
-        log.info("删除整月 %s：%d 条活动", month, n)
-        return n
 
     @_locked
     def count(self):
