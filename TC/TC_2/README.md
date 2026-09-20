@@ -1,12 +1,13 @@
 # 测试用例说明
 - 使用车辆型号：捷安特（GIANT）ATX 810 2014款红色  
 测试数据包含：
-   - TC_fit_analyzer_1_FROM鸟岛正门TO盛京大剧院.fit
-   - TC_fit_analyzer_1_FROM鸟岛正门TO盛京大剧院.gpx
-   - TC_fit_analyzer_1_FROM盛京大剧院TO鸟岛正门.fit
-   - TC_fit_analyzer_1_FROM盛京大剧院TO鸟岛正门.gpx
-   - fit_analyzer程序测试用例1-盛京大剧院到鸟岛正门.gpx  
-   - 路线起始终止的四张实时图片  
+   - TC_fit_analyzer_2_FROM南岸浑河大桥TOk11.fit
+   - TC_fit_analyzer_2_FROM南岸浑河大桥TOk11.gpx
+   - TC_fit_analyzer_2_FROMk11TO南岸浑河大桥.fit
+   - TC_fit_analyzer_2_FROMk11TO南岸浑河大桥.gpx
+   - fit_analyzer程序测试用例2-K11经由南京桥到南岸浑河大桥下.gpx  
+   - fit_analyzer程序测试用例2-K11经由南京桥到南岸浑河大桥下_作废.gpx
+   - 路线中四张实时图片  
 *测试用例中由于中途补水或者礼让车辆行人、躲避障碍物和遵守交规导致的gps路线偏移忽略不计。  
 
 参考交规：  
@@ -21,12 +22,13 @@
 - Vehicle model used: Giant ATX 810 (2014 model, red)
 Test data includes:
 
-   - TC_fit_analyzer_1_FROM Niaodao Main Gate TO Shengjing Grand Theatre.fit
-   - TC_fit_analyzer_1_FROM Niaodao Main Gate TO Shengjing Grand Theatre.gpx
-   - TC_fit_analyzer_1_FROM Shengjing Grand Theatre TO Niaodao Main Gate.fit
-   - TC_fit_analyzer_1_FROM Shengjing Grand Theatre TO Niaodao Main Gate.gpx
-   - fit_analyzer Test Case 1 - Shengjing Grand Theatre to Niaodao Main Gate.gpx
-   - Four real-time photos of the route's start and end points
+   - TC_fit_analyzer_2_FROM_South_Bank_Hunhe_Bridge_TO_k11.fit
+   - TC_fit_analyzer_2_FROM_South_Bank_Hunhe_Bridge_TO_k11.gpx
+   - TC_fit_analyzer_2_FROM_k11_TO_South_Bank_Hunhe_Bridge.fit
+   - TC_fit_analyzer_2_FROM_k11_TO_South_Bank_Hunhe_Bridge.gpx
+   - fit_analyzer_test_case_2-K11_via_Nanjing_Bridge_to_below_South_Bank_Hunhe_Bridge.gpx
+   - fit_analyzer_test_case_2-K11_via_Nanjing_Bridge_to_below_South_Bank_Hunhe_Bridge_obsolete.gpx
+   - Four real-time photos along the route
 *In the test case, GPS route deviations caused by mid-route hydration stops, yielding to vehicles and pedestrians, avoiding obstacles, and complying with traffic rules shall be disregarded.
 
 Reference traffic regulations:
