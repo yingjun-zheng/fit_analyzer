@@ -29,6 +29,12 @@ _CORE_IMPORTS = [
     "core.fitness",
 ]
 
+# 佳明云同步（garmin_sync.make_client 内局部 import），需显式声明；
+# 其二进制依赖 curl_cffi（libcurl-impersonate DLL）由依赖分析自动收集
+_GARMIN_IMPORTS = [
+    "garminconnect",
+]
+
 onefile = os.environ.get("CRP_ONEFILE") == "1"
 
 a = Analysis(
@@ -36,7 +42,7 @@ a = Analysis(
     pathex=[str(ROOT)],
     binaries=[],
     datas=DATAS,
-    hiddenimports=_WEBENGINE_IMPORTS + _CORE_IMPORTS,
+    hiddenimports=_WEBENGINE_IMPORTS + _CORE_IMPORTS + _GARMIN_IMPORTS,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

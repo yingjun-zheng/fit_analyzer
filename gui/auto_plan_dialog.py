@@ -9,6 +9,8 @@ from PySide6.QtWidgets import (
     QPlainTextEdit, QPushButton, QVBoxLayout, QComboBox,
 )
 
+from gui import theme as th
+
 
 class _PlanWorker(QThread):
     done = Signal(object)   # 成功传 result dict，失败传 str
@@ -116,7 +118,7 @@ class AutoPlanDialog(QDialog):
         if not self._ai_factory or not self._ai_enabled:
             QMessageBox.information(self, "提示", "请先在「设置」中启用并配置 AI")
             return
-        self.status.setStyleSheet("color: #888;")
+        self.status.setStyleSheet(f"color: {th.T('muted')};")
         self.status.setText("AI 正在拆解需求…")
         try:
             from core import route_ai_plan
@@ -124,7 +126,7 @@ class AutoPlanDialog(QDialog):
         except Exception:
             params = None
         if not params:
-            self.status.setStyleSheet("color: #c62828;")
+            self.status.setStyleSheet(f"color: {th.T('danger')};")
             self.status.setText("AI 拆解失败，请用下方表单手动填写。")
             return
         self.ed_origin.setText(params.get("origin_city") or "")
@@ -206,7 +208,7 @@ class AutoPlanDialog(QDialog):
             "rest_type": self.cb_rest.currentText(),
             "name": name,
         }
-        self.status.setStyleSheet("color: #888;")
+        self.status.setStyleSheet(f"color: {th.T('muted')};")
         self.status.setText("规划中…")
         self._worker = _PlanWorker(key, params, self)
         self._worker.progress.connect(self._on_progress)
@@ -218,14 +220,14 @@ class AutoPlanDialog(QDialog):
 
     def _on_done(self, payload):
         if isinstance(payload, str):
-            self.status.setStyleSheet("color: #c62828;")
+            self.status.setStyleSheet(f"color: {th.T('danger')};")
             self.status.setText(payload)
             return
 
         self._result = payload
         r = payload.get("route")
         if not r or not isinstance(r, dict) or not r.get("points"):
-            self.status.setStyleSheet("color: #c62828;")
+            self.status.setStyleSheet(f"color: {th.T('danger')};")
             self.status.setText("规划失败：路线数据不完整")
             return
 
@@ -248,5 +250,5 @@ class AutoPlanDialog(QDialog):
             dlg.load_route(r)
             dlg.exec()
         except Exception as e:
-            self.status.setStyleSheet("color: #c62828;")
+            self.status.setStyleSheet(f"color: {th.T('danger')};")
             self.status.setText(f"路书展示失败：{e}")

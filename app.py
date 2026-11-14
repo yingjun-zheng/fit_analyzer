@@ -18,8 +18,15 @@ def resource_path(rel):
 
 
 def default_data_dir():
-    base = os.environ.get("APPDATA") or str(Path.home())
-    return Path(base) / "FitAnalyzer"
+    """跨平台用户数据目录：Win=%APPDATA%/FitAnalyzer，mac=~/Library/Application Support，
+    Linux=XDG 数据目录（~/.local/share）。"""
+    if sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support"
+    elif os.name == "nt":
+        base = Path(os.environ.get("APPDATA") or (Path.home() / "AppData" / "Roaming"))
+    else:
+        base = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share"))
+    return base / "FitAnalyzer"
 
 
 def list_backgrounds():
@@ -80,7 +87,7 @@ def _run_headless_check(data_dir_arg):
 
 def main():
     parser = argparse.ArgumentParser(description=APP_NAME)
-    parser.add_argument("--data-dir", default=None, help="数据目录（默认 %APPDATA%/FitAnalyzer）")
+    parser.add_argument("--data-dir", default=None, help="数据目录（默认用户数据目录/FitAnalyzer）")
     parser.add_argument("--debug", action="store_true", help="更详细日志")
     parser.add_argument("--selftest", action="store_true", help="离屏自检：导入指定目录的 FIT 并打开一个活动后退出")
     parser.add_argument("--import-dir", default=None,
@@ -134,10 +141,13 @@ def main():
     app.setStyle("Fusion")
 
     from gui.main_window import MainWindow
-    from gui.theme import QSS, apply_light_palette
+    from gui import theme
 
-    apply_light_palette(app)  # 先浅色调色板（防 Windows 深色模式导致黑色块）
-    app.setStyleSheet(QSS)
+    # 主题（config "ui_theme"：dark=骑行橙炭灰 / light=浅色），含 QPalette 防
+    # Windows 系统深色模式把未样式化控件画花
+    theme.set_theme(config.get("ui_theme") or "dark")
+    theme.apply_palette(app)
+    app.setStyleSheet(theme.QSS())
     app.aboutToQuit.connect(db.close)
 
     win = MainWindow(data_dir, config, db, list_backgrounds())

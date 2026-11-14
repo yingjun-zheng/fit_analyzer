@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>骑行 FIT 数据分析器 · 定价说明</title>
+<style>
+  :root{
+    --bg:#0e1014;
+    --panel:#161a21;
+    --panel2:#1c212a;
+    --line:#2a3039;
+    --txt:#e6e9ee;
+    --txt2:#9aa3b0;
+    --txt3:#6b7481;
+    --accent:#ff7a3d;
+    --ok:#3ddc97;
+    --warn:#ffc857;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    background:var(--bg);
+    color:var(--txt);
+    font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+    line-height:1.7;
+    padding:56px 24px 80px;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1080px;margin:0 auto}
+
+  /* header */
+  .tag{
+    display:inline-block;
+    font-size:12px;
+    letter-spacing:.14em;
+    color:var(--accent);
+    border:1px solid rgba(255,122,61,.35);
+    background:rgba(255,122,61,.08);
+    padding:4px 10px;
+    border-radius:4px;
+    margin-bottom:22px;
+  }
+  h1{
+    font-size:40px;
+    line-height:1.25;
+    letter-spacing:-.02em;
+    font-weight:700;
+  }
+  h1 span{color:var(--accent)}
+  .lead{
+    margin-top:16px;
+    font-size:18px;
+    color:var(--txt2);
+    max-width:760px;
+  }
+  .meta{
+    margin-top:22px;
+    padding-top:18px;
+    border-top:1px solid var(--line);
+    display:flex;
+    flex-wrap:wrap;
+    gap:26px;
+    font-size:13px;
+    color:var(--txt3);
+  }
+  .meta b{color:var(--txt2);font-weight:500}
+
+  /* section */
+  section{margin-top:56px}
+  h2{
+    font-size:20px;
+    font-weight:600;
+    letter-spacing:.02em;
+    display:flex;
+    align-items:baseline;
+    gap:12px;
+  }
+  h2 .no{
+    font-size:12px;
+    color:var(--accent);
+    font-weight:500;
+    letter-spacing:.1em;
+  }
+  .sub{color:var(--txt3);font-size:14px;margin-top:8px;margin-bottom:22px}
+
+  /* cards */
+  .grid{display:grid;gap:14px}
+  .g5{grid-template-columns:repeat(auto-fit,minmax(196px,1fr))}
+  .g3{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+  .card{
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:10px;
+    padding:20px 18px;
+    display:flex;
+    flex-direction:column;
+    position:relative;
+  }
+  .card.hl{border-color:rgba(255,122,61,.5);background:linear-gradient(180deg,rgba(255,122,61,.07),var(--panel))}
+  .card .name{font-size:14px;color:var(--txt2);letter-spacing:.04em}
+  .card .price{font-size:28px;font-weight:700;margin-top:8px;letter-spacing:-.01em}
+  .card .price small{font-size:13px;font-weight:400;color:var(--txt3);margin-left:4px}
+  .card ul{margin-top:14px;padding-left:0;list-style:none;font-size:13px;color:var(--txt2);flex:1}
+  .card ul li{padding-left:14px;position:relative;margin-bottom:6px}
+  .card ul li::before{content:"";position:absolute;left:0;top:9px;width:5px;height:5px;border-radius:50%;background:var(--txt3)}
+  .card ul li.ex::before{background:var(--txt3);opacity:.4}
+  .card ul li.ex{color:var(--txt3)}
+  .badge{
+    position:absolute;top:-9px;right:14px;
+    font-size:11px;padding:2px 8px;border-radius:3px;
+    background:var(--accent);color:#151013;font-weight:600;letter-spacing:.06em;
+  }
+
+  /* table */
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th{
+    text-align:left;padding:10px 12px;font-weight:500;
+    color:var(--txt3);font-size:12px;letter-spacing:.08em;
+    border-bottom:1px solid var(--line);
+  }
+  td{padding:12px;border-bottom:1px solid rgba(42,48,57,.6);color:var(--txt2);vertical-align:top}
+  td:first-child{color:var(--txt);font-weight:500}
+  tr:last-child td{border-bottom:none}
+  .num{font-variant-numeric:tabular-nums;white-space:nowrap}
+  .ok{color:var(--ok)}
+  .warn{color:var(--warn)}
+
+  /* quote */
+  .quote{
+    border-left:2px solid var(--accent);
+    padding:2px 0 2px 16px;
+    color:var(--txt2);
+    font-size:15px;
+    margin:18px 0;
+  }
+  .quote b{color:var(--txt)}
+
+  footer{
+    margin-top:64px;padding-top:22px;border-top:1px solid var(--line);
+    font-size:13px;color:var(--txt3);
+    display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;
+  }
+
+  @media print{
+    body{background:#fff;color:#111;padding:20px}
+    .card,.panel{background:#fff;border-color:#ddd}
+    .card .price,.card .name,h2,td:first-child{color:#111}
+    .lead,.card ul,.sub,td,.meta{color:#444}
+    footer{color:#666}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="tag">OPC 赛道 · 定价说明</div>
+  <h1>骑行 FIT 数据分析器<br><span>软件永久免费，只卖「人」的那部分</span></h1>
+  <p class="lead">
+    一个纯本地运行的 Windows 桌面工具：批量导入码表 FIT 文件，出训练负荷、装备寿命、路书坡度分级和 AI 复盘。
+    代码 MIT 开源，数据不出本机。收钱的不是功能，是帮你把数据和训练看明白的那几小时。
+  </p>
+
+  <div class="meta">
+    <div><b>版本</b> v1.3.0</div>
+    <div><b>许可</b> MIT（可自由使用、二次开发）</div>
+    <div><b>形态</b> Windows 桌面 · 本地 SQLite · 自带 AI Key</div>
+    <div><b>更新</b> 2026-10-22</div>
+  </div>
+
+  <section>
+    <h2><span class="no">01</span>这是一门什么生意</h2>
+    <p class="sub">一句话：软件零元，服务收费。不做订阅制，不卖 Token，不碰云。</p>
+    <div class="quote">
+      骑行数据工具的主流做法是「把数据传到云上，然后按月收订阅费」。这条路我不走——
+      <b>因为愿意买码表的人，往往最在意数据在自己手里。</b>
+      我把软件免费开源，把需要人来干的活（配置、解读、定制）标上价。
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="no">02</span>客户是谁</h2>
+    <p class="sub">三类，按付费意愿和交付难度排。</p>
+    <table>
+      <thead>
+        <tr><th style="width:24%">客户</th><th style="width:38%">现在的处境</th><th>为什么会掏钱</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>有码表的业余骑行者<br><span style="color:var(--txt3);font-size:13px">年骑 2000–8000 km，用 iGPSPORT / 佳明 / 迈金</span></td>
+          <td>数据散在行者、Strava、码表 App 里；看得懂均速和里程，看不懂 CTL / TSB / 有氧解耦</td>
+          <td>想把历史数据一次性归拢到本机，并且有人把「这三个月到底练成什么样」讲清楚</td>
+        </tr>
+        <tr>
+          <td>骑行队 / 车店 / 俱乐部<br><span style="color:var(--txt3);font-size:13px">10–50 人</span></td>
+          <td>靠群里发截图对成绩，没人做统一统计；教练想知道谁练过头了</td>
+          <td>要一个统一看板 + 自动周报推送到群，省掉每周手工汇总</td>
+        </tr>
+        <tr>
+          <td>小 B 定制<br><span style="color:var(--txt3);font-size:13px">青训队、康复工作室、骑行赛事方</span></td>
+          <td>现成软件没有他们关心的指标口径</td>
+          <td>要私有指标、内网部署、或者把 FIT 数据接进自己的流程</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2><span class="no">03</span>价目表</h2>
+    <p class="sub">首发期定价，2026-12-31 前有效。所有价格含税，人民币。</p>
+    <div class="grid g5">
+
+      <div class="card">
+        <div class="name">免费版</div>
+        <div class="price">¥0<small>/ 永久</small></div>
+        <ul>
+          <li>全部现有功能</li>
+          <li>MIT 开源，可改可分发</li>
+          <li>本地存储、离线可用</li>
+          <li class="ex">不含远程安装指导</li>
+          <li class="ex">不含人工解读</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="name">上手服务</div>
+        <div class="price">¥99<small>/ 次</small></div>
+        <ul>
+          <li>远程装好并跑通</li>
+          <li>高德 Key 申请与配置</li>
+          <li>AI 模型接入调通（本地或远程）</li>
+          <li>30 分钟功能讲解，录屏留档</li>
+          <li class="ex">不含训练分析结论</li>
+        </ul>
+      </div>
+
+      <div class="card hl">
+        <div class="badge">最常买</div>
+        <div class="name">训练分析报告</div>
+        <div class="price">¥199<small>/ 份</small></div>
+        <ul>
+          <li>基于你自己的 FIT 数据</li>
+          <li>8–12 页 PDF：负荷曲线、体能变化、强度结构</li>
+          <li>FTP / 功率或心率口径校准</li>
+          <li>下一个训练周期的具体建议</li>
+          <li>3 份打包 <b style="color:var(--txt)">¥499</b></li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="name">车队版</div>
+        <div class="price">¥1,980<small>/ 年 · 10 人</small></div>
+        <ul>
+          <li>多人数据看板</li>
+          <li>周报自动推送到群（飞书/企微/钉钉）</li>
+          <li>过量训练与装备到期预警</li>
+          <li>1 次线上培训（60 分钟）</li>
+          <li>超出 10 人按 ¥120/人/年加购</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="name">定制开发</div>
+        <div class="price">¥300<small>/ 小时</small></div>
+        <ul>
+          <li>4 小时起（¥1,200 起）</li>
+          <li>新码表 / 新格式适配</li>
+          <li>私有指标与报表口径</li>
+          <li>内网离线部署</li>
+          <li>需求评估不收费，评估后给报价</li>
+        </ul>
+      </div>
+
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="no">04</span>为什么是这个价</h2>
+    <p class="sub">三个锚点，都能在现场被客户自己验证。</p>
+    <table>
+      <thead>
+        <tr><th style="width:26%">定价</th><th style="width:37%">锚在哪</th><th>换算</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>上手服务 ¥99</td>
+          <td>一次链条 + 飞轮更换的工时费（¥150–300）</td>
+          <td class="num">比一次保养便宜，省掉的是一晚上折腾 Key 和依赖报错</td>
+        </tr>
+        <tr>
+          <td>训练报告 ¥199/份</td>
+          <td>一次 Fitting 或一次私教课（¥200–500）</td>
+          <td class="num">同价位，但结论基于你自己三个月的真实功率曲线</td>
+        </tr>
+        <tr>
+          <td>车队版 ¥1,980/年</td>
+          <td>TrainingPeaks 订阅（约 ¥140/人/月）；10 人一年约 ¥16,800</td>
+          <td class="num">每人每年 ¥198，约为对标方案的 1/7，且数据留在本地</td>
+        </tr>
+        <tr>
+          <td>定制 ¥300/小时</td>
+          <td>沈阳本地外包时薪中位（¥300–500）</td>
+          <td class="num">取中位下限。软件本身免费，客户只为新增的那部分付钱</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2><span class="no">05</span>交付长什么样</h2>
+    <p class="sub">OPC 要求「样例交付」，这三份就是可交付、可验收的东西。</p>
+    <div class="grid g3">
+      <div class="card">
+        <div class="name">D1 · 上手交付</div>
+        <ul>
+          <li>交付物：可运行的桌面程序 + 配置好的高德 Key + AI 模型连通截图</li>
+          <li>时长：30–45 分钟远程</li>
+          <li>验收：客户自己导入 10 个 FIT 文件，出月度汇总与轨迹图</li>
+          <li>留档：全程录屏给客户</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="name">D2 · 训练报告</div>
+        <ul>
+          <li>交付物：8–12 页 PDF（负荷曲线 / 体能趋势 / 强度结构 / 下周期建议）</li>
+          <li>时长：3 个工作日内</li>
+          <li>验收：每条结论都能在软件里找到对应数据页</li>
+          <li>附：原始数据不出客户电脑</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="name">D3 · 车队版试用</div>
+        <ul>
+          <li>交付物：3 人 2 周试用 + 一个群机器人推送</li>
+          <li>时长：1 天内接通</li>
+          <li>验收：群里连续收到 2 次周报</li>
+          <li>转正：试用结束按 ¥1,980/年结算</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="no">06</span>条款</h2>
+    <table>
+      <tbody>
+        <tr><td style="width:22%">付款</td><td>微信 / 支付宝；满 ¥500 可开电子普通发票（需提供税号）。先付后交付，定制类可 5:5 分期。</td></tr>
+        <tr><td>退款</td><td>服务未开始，全额退。上手服务因客户环境不可用导致无法完成，退 50%。报告类交付后不退，但可在 7 天内免费改一次口径。</td></tr>
+        <tr><td>响应</td><td>工作日 24 小时内回复；车队版客户 12 小时内。</td></tr>
+        <tr><td>范围</td><td>服务只针对本产品。客户自备的码表硬件故障、第三方平台（Strava / 行者）账号问题不在范围内。</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2><span class="no">07</span>三件不卖</h2>
+    <p class="sub">这一节比价目表更能说明这是个正经生意。</p>
+    <table>
+      <tbody>
+        <tr>
+          <td style="width:26%">不卖个人订阅会员</td>
+          <td>业余骑行者一年真正想深看数据的次数是个位数，按月扣费必然高退订、高客诉。宁可一次一结。</td>
+        </tr>
+        <tr>
+          <td>不卖 AI Token</td>
+          <td>AI 走客户自己的 Key 或本地模型（Ollama / LM Studio）。转卖 Token 等于把成本和合规风险都揽到自己身上。</td>
+        </tr>
+        <tr>
+          <td>不卖云同步</td>
+          <td>「数据不出本机」是这产品唯一的护城河，也是我敢对车店和青训队报价的前提。做云同步等于自毁定位，还要背服务器和备案成本。</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2><span class="no">08</span>12 个月收入模型</h2>
+    <p class="sub">一个人，每周可投入约 10 小时，年可用工时约 500 小时。以下两档都不含融资。</p>
+    <table>
+      <thead>
+        <tr><th>科目</th><th class="num">保守</th><th class="num">中性</th><th>工时占用</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>上手服务（¥99）</td><td class="num">40 单 · ¥3,960</td><td class="num">80 单 · ¥7,920</td><td class="num">30 / 60 h</td></tr>
+        <tr><td>训练报告（¥199）</td><td class="num">30 份 · ¥5,970</td><td class="num">60 份 · ¥11,940</td><td class="num">60 / 120 h</td></tr>
+        <tr><td>车队版（¥1,980）</td><td class="num">3 家 · ¥5,940</td><td class="num">6 家 · ¥11,880</td><td class="num">24 / 48 h</td></tr>
+        <tr><td>定制开发（¥300/h）</td><td class="num">60 h · ¥18,000</td><td class="num">120 h · ¥36,000</td><td class="num">60 / 120 h</td></tr>
+        <tr><td><b>合计</b></td><td class="num ok"><b>¥33,870</b></td><td class="num ok"><b>¥67,740</b></td><td class="num">174 / 348 h</td></tr>
+      </tbody>
+    </table>
+    <p class="sub" style="margin-top:16px">
+      两个档位的工时都低于 500 小时上限，说明这套定价在一个人手里跑得动——这是「一个人就是一家公司」的硬约束，
+      而不是一句口号。收入规模不大，但它是可持续的现金流，不是估值故事。
+    </p>
+  </section>
+
+  <section>
+    <h2><span class="no">09</span>90 天验证计划</h2>
+    <p class="sub">当前状态：v1.3.0、MIT 开源、0 个付费客户。这一节用来证明假设能不能被推翻。</p>
+    <table>
+      <tbody>
+        <tr><td style="width:22%">第 1–30 天</td><td>在本地骑行群与车店免费做 10 次上手服务，只收反馈不收钱。目标：拿到 3 个「愿意付费」的明确信号。</td></tr>
+        <tr><td>第 31–60 天</td><td>按 ¥99 正式收费，成交 3 单即为定价成立。同时交付 2 份 ¥199 报告，验证「报告有人买」。</td></tr>
+        <tr><td>第 61–90 天</td><td>找 1 支本地骑行队做 2 周车队版试用。群周报连续推送 2 次且队长愿意续费，即为 B 端成立。</td></tr>
+        <tr><td>失败判定</td><td>90 天内付费客户 &lt; 3，说明「愿意为骑行数据花钱」在本地市场不成立。届时砍掉服务线，产品回到纯开源维护。</td></tr>
+      </tbody>
+    </table>
+    <p class="sub" style="margin-top:16px">
+      先写清失败条件，是为了避免把「有人夸好用」当成「有人愿意付钱」——这两件事之间隔着一次真实的付款动作。
+    </p>
+  </section>
+
+  <footer>
+    <div>骑行 FIT 数据分析器 · v1.3.0 · MIT License</div>
+    <div>lkyzhengyj@outlook.com　|　沈阳</div>
+  </footer>
+
+</div>
+</body>
+</html>

@@ -438,6 +438,13 @@ class DB:
         return self.conn.execute("SELECT COUNT(*) AS c FROM activities").fetchone()["c"]
 
     @_locked
+    def count_month(self, month):
+        """某月活动条数（SQL 计数；删除确认等场景免全量加载）。"""
+        return self.conn.execute(
+            "SELECT COUNT(*) AS c FROM activities WHERE month=?", (month,)
+        ).fetchone()["c"]
+
+    @_locked
     def month_activities(self, month):
         return self.list_activities(month=month)
 

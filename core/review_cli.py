@@ -16,14 +16,20 @@ from pathlib import Path
 
 
 def default_data_dir():
-    base = os.environ.get("APPDATA") or str(Path.home())
-    return Path(base) / "FitAnalyzer"
+    """与 app.py 保持一致的跨平台数据目录（Win=%APPDATA%，mac=~/Library，Linux=XDG）。"""
+    if sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support"
+    elif os.name == "nt":
+        base = Path(os.environ.get("APPDATA") or (Path.home() / "AppData" / "Roaming"))
+    else:
+        base = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share"))
+    return base / "FitAnalyzer"
 
 
 def main():
     parser = argparse.ArgumentParser(description="骑行复盘 Agent（对话式）")
     parser.add_argument("question", nargs="?", default=None, help="复盘问题；省略则进入交互式对话")
-    parser.add_argument("--data-dir", default=None, help="数据目录（默认 %APPDATA%/FitAnalyzer）")
+    parser.add_argument("--data-dir", default=None, help="数据目录（默认用户数据目录/FitAnalyzer）")
     parser.add_argument("--debug", action="store_true", help="详细日志")
     args = parser.parse_args()
 

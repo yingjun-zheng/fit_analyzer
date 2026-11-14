@@ -12,10 +12,10 @@ from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import QToolTip, QWidget
 
+from gui import theme as th
+
 WEEKS = 26  # 展示近 26 周（半年）
 
-# 里程分级色（0 → 多）：与应用主题蓝一致
-LEVEL_COLORS = ["#eef1f5", "#cfe0f5", "#9dc4ef", "#5b9de8", "#1e68c8"]
 _WEEKDAY_LABELS = ["一", "", "三", "", "五", "", "日"]
 _GAP = 3.0
 _LEFT, _TOP, _RIGHT, _BOTTOM = 26.0, 16.0, 6.0, 6.0
@@ -58,7 +58,8 @@ class RideHeatmapWidget(QWidget):
     def paintEvent(self, _):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        p.fillRect(self.rect(), QColor("#ffffff"))
+        levels = th.heatmap_levels()
+        p.fillRect(self.rect(), QColor(th.T("surface")))
         if self._start is None:
             return
         x0, y0, cell, _ = self._geometry()
@@ -75,7 +76,7 @@ class RideHeatmapWidget(QWidget):
             x = x0 + col * step
             y = y0 + row * step
             if row == 0 and d.month != prev_month:
-                p.setPen(QColor("#7a8794"))
+                p.setPen(QColor(th.T("muted")))
                 p.drawText(QRectF(x, 0, step * 2, _TOP - 2),
                            Qt.AlignLeft | Qt.AlignVCenter, f"{d.month}月")
                 prev_month = d.month
@@ -84,11 +85,11 @@ class RideHeatmapWidget(QWidget):
             info = self._days.get(d.isoformat())
             level = self._level_for(info.get("km", 0)) if info else 0
             p.setPen(Qt.NoPen)
-            p.setBrush(QColor(LEVEL_COLORS[level]))
+            p.setBrush(QColor(levels[level]))
             p.drawRoundedRect(QRectF(x, y, cell, cell), 2.5, 2.5)
 
         # 星期标签（一/三/五/日 稀疏标注）
-        p.setPen(QColor("#9aa6b2"))
+        p.setPen(QColor(th.T("muted")))
         for row, label in enumerate(_WEEKDAY_LABELS):
             if label:
                 y = y0 + row * step + cell / 2

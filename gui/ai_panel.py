@@ -24,32 +24,36 @@ from PySide6.QtWidgets import (
 )
 
 from core import month_agent
+from gui import theme as th
 
 log = logging.getLogger("fit.aipanel")
 
-_PANEL_QSS = """
-#aiPanel {
-    background: #1a2027;
-    border: 1px solid #2b3744;
+
+def _panel_qss():
+    """浮层配色跟随全局主题（深浅切换后由 apply_theme() 重新套用）。"""
+    return f"""
+#aiPanel {{
+    background: {th.T('surface')};
+    border: 1px solid {th.T('border')};
     border-radius: 12px;
-}
-#aiPanel QLabel#muted { color: #8b98a5; }
-#aiPanel QTextEdit {
-    background: #141a20; color: #dbe4ec; border: 1px solid #2b3744;
+}}
+#aiPanel QLabel#muted {{ color: {th.T('muted')}; }}
+#aiPanel QTextEdit {{
+    background: {th.T('bg')}; color: {th.T('text')}; border: 1px solid {th.T('border')};
     border-radius: 8px; font-size: 13px;
-}
-#aiPanel QLineEdit {
-    background: #141a20; color: #dbe4ec; border: 1px solid #2b3744;
+}}
+#aiPanel QLineEdit {{
+    background: {th.T('bg')}; color: {th.T('text')}; border: 1px solid {th.T('border')};
     border-radius: 8px; padding: 6px 8px; font-size: 13px;
-}
-#aiPanel QPushButton {
-    background: #26303b; color: #dbe4ec; border: none;
+}}
+#aiPanel QPushButton {{
+    background: {th.T('surface2')}; color: {th.T('text')}; border: none;
     border-radius: 8px; padding: 6px 10px; font-size: 13px;
-}
-#aiPanel QPushButton:hover { background: #33404d; }
-#aiPanel QPushButton#primary { background: #1e6fd9; color: #fff; font-weight: 600; }
-#aiPanel QPushButton#primary:hover { background: #2a7ee8; }
-#aiPanel QPushButton#closeBtn { padding: 2px 7px; font-size: 14px; }
+}}
+#aiPanel QPushButton:hover {{ background: {th.T('border')}; }}
+#aiPanel QPushButton#primary {{ background: {th.T('accent')}; color: {th.T('accent_text')}; font-weight: 600; }}
+#aiPanel QPushButton#primary:hover {{ background: {th.T('accent_hover')}; }}
+#aiPanel QPushButton#closeBtn {{ padding: 2px 7px; font-size: 14px; }}
 """
 
 _TOOL_CN = {
@@ -70,7 +74,7 @@ class AiAssistantPanel(QWidget):
         super().__init__(main_window, Qt.Tool | Qt.FramelessWindowHint)
         self._mw = main_window
         self.setObjectName("aiPanel")
-        self.setStyleSheet(_PANEL_QSS)
+        self.setStyleSheet(_panel_qss())
         self.setAttribute(Qt.WA_ShowWithoutActivating, False)
 
         # ---- 会话状态（面板常驻，页面切换不丢失）----
@@ -87,6 +91,10 @@ class AiAssistantPanel(QWidget):
         self._poll.timeout.connect(self._drain)
 
         self._build_ui()
+
+    def apply_theme(self):
+        """主题切换后重新套用浮层配色（主窗口 _reapply_theme 调用）。"""
+        self.setStyleSheet(_panel_qss())
 
     # ---------------- UI ----------------
     def _build_ui(self):

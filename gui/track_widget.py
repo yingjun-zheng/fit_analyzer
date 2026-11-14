@@ -6,6 +6,8 @@ from PySide6.QtCore import QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QPushButton, QSizePolicy, QWidget
 
+from gui import theme as th
+
 MARGIN = 0.08  # 轨迹在背景图中的留白比例
 ANIM_INTERVAL_MS = 16  # 起点→终点绘制动画的帧间隔
 RIDER_INTERVAL_MS = 33  # 骑手动画帧间隔（约 30fps）
@@ -153,10 +155,11 @@ class TrackWidget(QWidget):
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        p.fillRect(self.rect(), QColor("#f2f4f7"))
+        accent = QColor(th.T("accent"))
+        p.fillRect(self.rect(), QColor(th.T("bg")))
         w, h = self.width(), self.height()
         if self.pixmap.isNull():
-            p.setPen(QColor("#7a8794"))
+            p.setPen(QColor(th.T("muted")))
             p.drawText(self.rect(), Qt.AlignCenter, "未找到背景图片 back9.jpeg")
             return
         iw, ih = self.pixmap.width(), self.pixmap.height()
@@ -165,7 +168,7 @@ class TrackWidget(QWidget):
         ox, oy = (w - dw) / 2, (h - dh) / 2
         p.drawPixmap(QRectF(ox, oy, dw, dh), self.pixmap, QRectF(0, 0, iw, ih))
         if len(self.points) < 2:
-            p.setPen(QColor("#7a8794"))
+            p.setPen(QColor(th.T("muted")))
             p.drawText(QRectF(ox, oy, dw, dh), Qt.AlignCenter, "无轨迹数据")
             return
         flat = self._to_flat(iw, ih)
@@ -188,7 +191,8 @@ class TrackWidget(QWidget):
             hx = fx0 + (fx1 - fx0) * frac
             path.lineTo(ox + hx * scale, oy + hy * scale)
             head = (hy, hx)
-        p.setPen(QPen(QColor("#1e88e5"), 3.0, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        # 轨迹线用品牌强调色（Strava 路线橙），起终点用骑行 App 通用的绿/红圆点
+        p.setPen(QPen(accent, 3.0, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
         p.drawPath(path)
 
         def dot(yx, color):
@@ -197,14 +201,14 @@ class TrackWidget(QWidget):
             p.setPen(QPen(QColor("white"), 2))
             p.drawEllipse(QRectF(sx - 6, sy - 6, 12, 12))
 
-        dot(flat[0], "#2e7d32")
+        dot(flat[0], "#22c55e")
         if prog >= 1.0:
-            dot(flat[-1], "#e53935")
+            dot(flat[-1], "#ef4444")
             self._draw_rider(p, flat, ox, oy, scale)
         else:
             # 动画进行中：画一个随轨迹移动的“骑手”点
             sy, sx = oy + head[0] * scale, ox + head[1] * scale
-            p.setBrush(QColor("#1e88e5"))
+            p.setBrush(accent)
             p.setPen(QPen(QColor("white"), 2))
             p.drawEllipse(QRectF(sx - 7, sy - 7, 14, 14))
 
@@ -214,9 +218,9 @@ class TrackWidget(QWidget):
         if pos is None:
             return
         sy, sx = oy + pos[0] * scale, ox + pos[1] * scale
-        # 地面小椭圆底座：白底蓝边，任何背景都清晰可见（emoji 渲染异常时仍能定位骑手）
+        # 地面小椭圆底座：白底强调色描边，任何背景都清晰可见（emoji 渲染异常时仍能定位骑手）
         p.setBrush(QColor(255, 255, 255, 215))
-        p.setPen(QPen(QColor("#1e88e5"), 2))
+        p.setPen(QPen(QColor(th.T("accent")), 2))
         p.drawEllipse(QRectF(sx - 7, sy - 2, 14, 6))
         p.setFont(QFont("Segoe UI Emoji", 19))
         p.drawText(QRectF(sx - 18, sy - 40, 36, 36), Qt.AlignCenter, "🚴")

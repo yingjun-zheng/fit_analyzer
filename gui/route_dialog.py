@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
 
 from core import route as route_mod
 from gui import charts as ch
+from gui import theme as th
 
 
 class _AnalyzeWorker(QThread):
@@ -113,7 +114,7 @@ class RouteDialog(QDialog):
             ys = [p["ele_m"] for p in prof]
             view = ch.elevation_chart_with_climbs(
                 "海拔剖面（爬坡段高亮）", xs, ys, r.get("climbs", []),
-                color="#1e88e5", y_label="海拔 (m)", height=300, fmt="%.0f")
+                color=th.T("primary_series"), y_label="海拔 (m)", height=300, fmt="%.0f")
             self.chart_container.addWidget(view)
         else:
             self.chart_container.addWidget(QLabel("该路书无海拔数据，无法绘制剖面。"))
@@ -152,7 +153,7 @@ class RouteDialog(QDialog):
             QMessageBox.information(self, "提示", "请先在「设置」中启用并配置 AI")
             return
         self.btn_ai.setEnabled(False)
-        self.ai_label.setStyleSheet("color: #888;")
+        self.ai_label.setStyleSheet(f"color: {th.T('muted')};")
         self.ai_label.setText("AI 分析中，请稍候…")
         self._worker = _AnalyzeWorker(self._ai_factory, self._route, None, self)
         self._worker.done.connect(self._on_ai_done)
@@ -164,7 +165,7 @@ class RouteDialog(QDialog):
             self.ai_label.setStyleSheet("")
             self.ai_label.setText(f"<b>AI 难度解读：</b><br>{answer}")
         else:
-            self.ai_label.setStyleSheet("color: #c62828;")
+            self.ai_label.setStyleSheet(f"color: {th.T('danger')};")
             self.ai_label.setText("AI 解读失败（请检查 AI 配置或网络）。")
 
     def _export(self):

@@ -68,9 +68,13 @@ DEFAULTS = {
     # ---- 自动导入（P3：文件夹监控） ----
     "auto_import_enabled": False,       # 监控码表导出目录，自动导入新 FIT
     "auto_import_dir": "",              # 监控目录（空=未设置）
+    "garmin_email": "",                 # 佳明云同步（P4）：账号
+    "garmin_password": "",              # 佳明密码（本地保存，掩码显示）
+    "garmin_cn": True,                  # True=中国区 garmin.cn，False=国际区
+    "garmin_sync_on_launch": False,     # 启动后自动同步一次
 }
 
-_SENSITIVE = {"ai_api_key", "amap_security", "amap_web_key"}
+_SENSITIVE = {"ai_api_key", "amap_security", "amap_web_key", "garmin_password"}
 
 
 class Config:

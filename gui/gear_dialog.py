@@ -15,9 +15,16 @@ from PySide6.QtWidgets import (
 )
 
 from core import gear as gear_mod
+from gui import theme as th
 
-_STATUS_COLOR = {"due": "#e53935", "watch": "#f57c00", "ok": "#43a047", "none": "#7a8794"}
 _LEVEL_CN = {"due": "建议更换", "watch": "关注", "ok": "良好", "none": "未设寿命"}
+
+
+def _status_color(level):
+    """装备状态 → 主题色（due 红 / watch 橙 / ok 绿 / none 灰）。"""
+    s = th.series()
+    return {"due": th.T("danger"), "watch": th.T("warn"),
+            "ok": s["cad"], "none": th.T("muted")}.get(level, th.T("text"))
 
 
 class _GearEditDialog(QDialog):
@@ -152,9 +159,9 @@ class GearDialog(QDialog):
                     f"{s['km']:.0f} km",
                     f"{s['expected_km']:.0f} km" if s["expected_km"] else "—",
                     f"{s['pct']:.0f}%" if s["pct"] is not None else "—", status]
-            color = QColor(_STATUS_COLOR.get(s["level"], "#26313b"))
+            color = QColor(_status_color(s["level"]))
             if s["retired"]:
-                color = QColor("#b0b8c0")
+                color = QColor(th.T("muted"))
             for c, v in enumerate(vals):
                 item = QTableWidgetItem(str(v))
                 if c >= 4:

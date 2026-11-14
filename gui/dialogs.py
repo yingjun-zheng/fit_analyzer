@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+import os
 from pathlib import Path
 
 from core import logging_setup
@@ -47,6 +48,13 @@ class SettingsDialog(QDialog):
 
         form = QFormLayout()
         form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
+
+        # 界面主题（深色=骑行橙炭灰，浅色=白底橙强调；保存后立即生效）
+        self.cmbTheme = QComboBox()
+        self.cmbTheme.addItem("深色（骑行橙）", "dark")
+        self.cmbTheme.addItem("浅色", "light")
+        self.cmbTheme.setCurrentIndex(0 if (d.get("ui_theme") or "dark") == "dark" else 1)
+        form.addRow("界面主题", self.cmbTheme)
 
         self.edHrPcts = QLineEdit(",".join(str(x) for x in (d.get("hr_zone_pcts") or [])))
         self.edHrMax = QLineEdit(str(d.get("hr_max_override") or 0))
@@ -152,16 +160,21 @@ class SettingsDialog(QDialog):
                                            "· 飞书群机器人\n· 企业微信群机器人\n· 钉钉群机器人")
         self.edWebhooks.setFixedHeight(70)
         form.addRow("Webhook 地址", self.edWebhooks)
-        task_row = QHBoxLayout()
-        self.btnTaskInstall = QPushButton("安装计划任务（每天 08:00 离线检查）")
-        self.btnTaskInstall.clicked.connect(self._install_task)
-        self.btnTaskRemove = QPushButton("卸载计划任务")
-        self.btnTaskRemove.clicked.connect(self._remove_task)
-        task_row.addWidget(self.btnTaskInstall)
-        task_row.addWidget(self.btnTaskRemove)
-        form.addRow(task_row)
-        task_tip = QLabel("安装后即使软件未打开，计划任务也会在指定时间唤起离线检查，"
-                          "把新提醒/周报推送到 Webhook 群。")
+        if os.name == "nt":
+            task_row = QHBoxLayout()
+            self.btnTaskInstall = QPushButton("安装计划任务（每天 08:00 离线检查）")
+            self.btnTaskInstall.clicked.connect(self._install_task)
+            self.btnTaskRemove = QPushButton("卸载计划任务")
+            self.btnTaskRemove.clicked.connect(self._remove_task)
+            task_row.addWidget(self.btnTaskInstall)
+            task_row.addWidget(self.btnTaskRemove)
+            form.addRow(task_row)
+            task_tip = QLabel("安装后即使软件未打开，计划任务也会在指定时间唤起离线检查，"
+                              "把新提醒/周报推送到 Webhook 群。")
+        else:
+            task_tip = QLabel("计划任务推送仅支持 Windows（schtasks）。\n"
+                              "macOS / Linux 可用 cron / launchd 定时调用："
+                              "python app.py --headless-check")
         task_tip.setObjectName("muted")
         task_tip.setWordWrap(True)
         form.addRow(task_tip)
@@ -241,6 +254,34 @@ class SettingsDialog(QDialog):
         auto_tip.setObjectName("muted")
         auto_tip.setWordWrap(True)
         form.addRow(auto_tip)
+
+        # 佳明云同步（P4 路线 A：Garmin Connect 增量下载原始 FIT）
+        g_title = QLabel("佳明云同步")
+        g_title.setObjectName("h3")
+        form.addRow(g_title)
+        self.edGarminEmail = QLineEdit(d.get("garmin_email") or "")
+        self.edGarminEmail.setPlaceholderText("佳明登录邮箱")
+        form.addRow("账号", self.edGarminEmail)
+        self.edGarminPwd = QLineEdit(d.get("garmin_password") or "")
+        self.edGarminPwd.setEchoMode(QLineEdit.Password)
+        self.edGarminPwd.setPlaceholderText("佳明登录密码（仅保存在本机）")
+        form.addRow("密码", self.edGarminPwd)
+        self.cmbGarminRegion = QComboBox()
+        self.cmbGarminRegion.addItem("中国区（garmin.cn）", True)
+        self.cmbGarminRegion.addItem("国际区（garmin.com）", False)
+        _idx = self.cmbGarminRegion.findData(bool(d.get("garmin_cn", True)))
+        self.cmbGarminRegion.setCurrentIndex(_idx if _idx >= 0 else 0)
+        form.addRow("分区", self.cmbGarminRegion)
+        self.chkGarminLaunch = QCheckBox("启动软件后自动同步一次")
+        self.chkGarminLaunch.setChecked(bool(d.get("garmin_sync_on_launch")))
+        form.addRow(self.chkGarminLaunch)
+        g_tip = QLabel("工具菜单「☁️ 同步佳明云端」手动触发；首次登录可能要求验证码"
+                       "（建议在佳明安全设置中改用邮箱验证码），登录态保存后不再重复验证。"
+                       "新 FIT 优先落入「自动导入」的监控目录，由自动导入入库；"
+                       "未配置监控目录则存到数据目录 garmin_sync 文件夹。")
+        g_tip.setObjectName("muted")
+        g_tip.setWordWrap(True)
+        form.addRow(g_tip)
 
         # 诊断与日志（面向排障/开发，一般用户无需使用）
         diag_title = QLabel("诊断与日志")
@@ -420,6 +461,7 @@ class SettingsDialog(QDialog):
             if k and v and "/" in k:
                 device_models[k] = v
         self.config.update({
+            "ui_theme": self.cmbTheme.currentData() or "dark",
             "hr_zone_pcts": _parse_float_list(self.edHrPcts.text()),
             "hr_max_override": hr_max,
             "speed_zone_kmh": _parse_float_list(self.edSpeed.text()),
@@ -448,6 +490,10 @@ class SettingsDialog(QDialog):
                 [ln.strip() for ln in self.edWebhooks.toPlainText().splitlines() if ln.strip()]),
             "auto_import_enabled": self.chkAutoImport.isChecked(),
             "auto_import_dir": self.edAutoDir.text().strip(),
+            "garmin_email": self.edGarminEmail.text().strip(),
+            "garmin_password": self.edGarminPwd.text(),
+            "garmin_cn": bool(self.cmbGarminRegion.currentData()),
+            "garmin_sync_on_launch": self.chkGarminLaunch.isChecked(),
             "ssl_insecure_fallback": self.chkSslFallback.isChecked(),
         })
         # 让 SSL 降级开关立即生效（下次请求即按新配置），不必重启应用

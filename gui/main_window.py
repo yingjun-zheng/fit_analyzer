@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QHeaderView,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMainWindow,
@@ -43,6 +44,7 @@ from core import ai_analysis, ai_client, analysis, fit_parser, logging_setup
 from core.config import Config
 from core.db import DB
 from gui import charts as ch
+from gui import theme as th
 from gui.dialogs import SettingsDialog
 from gui.heatmap import RideHeatmapWidget
 from gui.theme import fmt_dt, fmt_duration, fmt_km, kmh
@@ -78,7 +80,7 @@ def make_app_icon():
     pm.fill(Qt.transparent)
     p = QPainter(pm)
     p.setRenderHint(QPainter.Antialiasing)
-    p.setBrush(QColor("#1e88e5"))
+    p.setBrush(QColor(th.T("accent")))
     p.setPen(Qt.NoPen)
     p.drawEllipse(4, 4, 56, 56)
     p.setPen(QPen(QColor("white"), 5, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
@@ -168,6 +170,9 @@ class MainWindow(QMainWindow):
         self._schedule_update_check()  # 启动 3 秒后静默检查更新
         self._schedule_alerts()        # 启动 4 秒后检测一次阈值提醒
         self._init_auto_import()       # P3：文件夹监控自动导入
+        if self.config.get("garmin_sync_on_launch"):
+            # 启动 8 秒后自动同步佳明云端（避开启动高峰，token 有效时无感）
+            QTimer.singleShot(8000, self.sync_garmin)
 
     # ---------------- UI 构建 ----------------
     def _build_ui(self):
@@ -250,6 +255,9 @@ class MainWindow(QMainWindow):
         self._add_action(m_tools, "🔧 装备管家", self.open_gear, tip="消耗件台账与里程驱动的保养提醒")
         m_tools.addSeparator()
         self._add_action(m_tools, "🔄 刷新", self.load_months, "F5", "重新加载训练记录")
+        m_tools.addSeparator()
+        self._add_action(m_tools, "☁️ 同步佳明云端", self.sync_garmin,
+                         tip="登录 Garmin Connect 增量下载原始 FIT（设置中配置账号）")
         # AI 助手浮层开关（关闭后从这里或工具栏/Ctrl+B 找回）
         m_tools.addSeparator()
         self._add_action(m_tools, "🤖 AI 训练助手", self.toggle_ai_panel, "Ctrl+B",
@@ -304,8 +312,8 @@ class MainWindow(QMainWindow):
             f"<h3>{self.config.get('app_name')} v{self.config.get('version')}</h3>"
             "<p>免费、本地运行的骑行 FIT 数据离线分析软件（PySide6 原生界面，"
             "SQLite 本地存储，无浏览器、无本地服务）。</p>"
-            "<p style='color:#7a8794'>数据目录：" + str(self.data_dir) + "</p>"
-            "<p style='color:#7a8794'>数据仅存本机；联网功能（AI/高德/海拔补全/更新检查）"
+            f"<p style='color:{th.T('muted')}'>数据目录：{self.data_dir}</p>"
+            f"<p style='color:{th.T('muted')}'>数据仅存本机；联网功能（AI/高德/海拔补全/更新检查）"
             "均需自行配置且只在你主动使用时调用。</p>")
 
     # ---------------- 软件更新（自更新引擎） ----------------
@@ -316,6 +324,9 @@ class MainWindow(QMainWindow):
         return Path(__file__).resolve().parent.parent
 
     def _schedule_update_check(self):
+        # 自更新引擎仅限 Windows 打包版；其他平台跳过启动时静默检查
+        if os.name != "nt":
+            return
         QTimer.singleShot(3000, self._check_update_auto)
 
     def _check_update_auto(self):
@@ -324,7 +335,17 @@ class MainWindow(QMainWindow):
         self._check_update()
 
     def _check_update(self):
-        """后台检查更新；发现新版本弹窗让用户选择。"""
+        """后台检查更新；发现新版本弹窗让用户选择。
+
+        自更新引擎基于 Windows exe 原子替换（build/pack.py 产物 + updater.bat），
+        其他平台目前不提供自动更新（源码运行可直接 git pull）。
+        """
+        if os.name != "nt":
+            QMessageBox.information(
+                self, "检查更新",
+                "自动更新目前仅支持 Windows 打包版。\n"
+                "macOS / Linux 请从源码运行：git pull 后重启即可。")
+            return
         if getattr(self, "_update_checking", False):
             return
         if not (self.config.get("update_url") or "").strip():
@@ -544,14 +565,12 @@ class MainWindow(QMainWindow):
         cal_head = QHBoxLayout()
         cal_title = QLabel("训练日历（近半年 · 颜色按当日里程）")
         cal_title.setObjectName("h3")
-        legend = QLabel(
-            "少 <span style='color:#eef1f5'>■</span><span style='color:#cfe0f5'>■</span>"
-            "<span style='color:#9dc4ef'>■</span><span style='color:#5b9de8'>■</span>"
-            "<span style='color:#1e68c8'>■</span> 多")
-        legend.setObjectName("muted")
+        # 图例色随主题（_render_heatmap 里刷新文本，主题切换后立即生效）
+        self.mv_heatmap_legend = QLabel("")
+        self.mv_heatmap_legend.setObjectName("muted")
         cal_head.addWidget(cal_title)
         cal_head.addStretch(1)
-        cal_head.addWidget(legend)
+        cal_head.addWidget(self.mv_heatmap_legend)
         cal_card.layout().addLayout(cal_head)
         self.mv_heatmap = RideHeatmapWidget()
         cal_card.layout().addWidget(self.mv_heatmap)
@@ -853,6 +872,11 @@ class MainWindow(QMainWindow):
         self._shown_month = None        # 数据已变（导入/删除/重识别），页面需重建
         self._shown_activity_id = None
         months = self.db.months()
+        # 一次性取全部活动，按月分组（原来逐月查库是 N+1 查询；
+        # 且旧路径 list_activities 默认 limit=500，活动多的月份会被截断）
+        by_month = {}
+        for a in self.db.list_activities(limit=100000):
+            by_month.setdefault(a.get("month") or "未知", []).append(a)
         self.month_tree.clear()
         self._month_items = {}
         for m in months:
@@ -861,7 +885,7 @@ class MainWindow(QMainWindow):
             top.setExpanded(True)
             self.month_tree.addTopLevelItem(top)
             self._month_items[m["month"]] = top
-            for a in self.db.list_activities(month=m["month"]):
+            for a in by_month.get(m["month"], []):
                 badge = "🚴通勤 · " if a.get("commute") else ""
                 child = QTreeWidgetItem([
                     f"{fmt_dt(a['start_time'])}  {badge}{a['name']}  {fmt_km(a['distance_km'])}  {fmt_duration(a['timer_s'])}"])
@@ -910,7 +934,8 @@ class MainWindow(QMainWindow):
         extra_ids = [i for i in (extra_ids or [])]
         parts, total = [], 0
         for m in months:
-            cnt = len(self.db.list_activities(month=m, limit=100000))
+            # SQL COUNT 取数即可，原来把整月活动全部载入内存只为 len()
+            cnt = self.db.count_month(m)
             total += cnt
             parts.append(f"「{m}」{cnt} 条")
         grand = total + len(extra_ids)
@@ -1060,10 +1085,12 @@ class MainWindow(QMainWindow):
             self.ai_panel.clear_activity()  # 列表已重建，活动关联一并清除
             self.ai_panel.set_scope(f"当前范围：{month}（AI 提问基于该月数据）")
         self.mv_page.setUpdatesEnabled(False)  # 重建期间暂停重绘，避免界面闪烁
-        self._render_year_goal(month)
+        # months() 一次取全页共用（原来同一页内最多查 3 次全表聚合）
+        months_all = self.db.months()
+        self._render_year_goal(month, months_all)
         self._render_heatmap()
         self._render_gear_reminder()
-        m = next((x for x in self.db.months() if x["month"] == month), None)
+        m = next((x for x in months_all if x["month"] == month), None)
         acts = self.db.list_activities(month=month)
         if m is None:
             m = {"count": 0, "distance_km": 0, "hours": 0, "ascent_m": 0, "calories": 0, "avg_speed_kmh": 0}
@@ -1084,16 +1111,17 @@ class MainWindow(QMainWindow):
         for i, (k, v) in enumerate(values):
             self.mv_stats.addWidget(self._stat_card(k, v), i // 3, i % 3)
 
-        months = self.db.months()[::-1]
+        months = months_all[::-1]
         self._clear_layout(self.mv_dist_holder)
         self._clear_layout(self.mv_count_holder)
         if months:
+            s = th.series()
             self.mv_dist_holder.addWidget(ch.line_chart_cat(
                 "各月里程 (km)", [m0["month"] for m0 in months],
-                [m0["distance_km"] for m0 in months], "#1e88e5", "km", 260, "%.1f"))
+                [m0["distance_km"] for m0 in months], s["dist"], "km", 260, "%.1f"))
             self.mv_count_holder.addWidget(ch.line_chart_cat(
                 "各月骑行次数", [m0["month"] for m0 in months],
-                [m0["count"] for m0 in months], "#43a047", "次", 260, "%.0f"))
+                [m0["count"] for m0 in months], s["count"], "次", 260, "%.0f"))
 
         # 训练负荷趋势（CTL/ATL/TSB，全量数据）
         self._clear_layout(self.mv_load_holder)
@@ -1123,13 +1151,14 @@ class MainWindow(QMainWindow):
         if item is not None and item.data(Qt.UserRole):
             self.show_activity(item.data(Qt.UserRole))
 
-    def _render_year_goal(self, month):
+    def _render_year_goal(self, month, months_all=None):
         """年度里程目标进度（设置 → 年度里程目标，0=不启用）。"""
         from datetime import date
 
         goal = float(self.config.get("year_goal_km") or 0)
+        months_all = self.db.months() if months_all is None else months_all
         year = (month or "")[:4]
-        ytd = sum(m0["distance_km"] for m0 in self.db.months()
+        ytd = sum(m0["distance_km"] for m0 in months_all
                   if (m0["month"] or "").startswith(year))
         self.mv_goal_title.setText(f"{year} 年度里程目标")
         if goal <= 0:
@@ -1159,6 +1188,13 @@ class MainWindow(QMainWindow):
         end = date.today()
         daily = self.db.daily_km_since((end - timedelta(days=26 * 7 - 1)).isoformat())
         self.mv_heatmap.set_data(daily, end)
+        self._render_heatmap_legend()
+
+    def _render_heatmap_legend(self):
+        """图例色块与热力图配色同源（主题切换后跟随）。"""
+        if hasattr(self, "mv_heatmap_legend"):
+            spans = "".join(f"<span style='color:{c}'>■</span>" for c in th.heatmap_levels())
+            self.mv_heatmap_legend.setText(f"少 {spans} 多")
 
     def _render_gear_reminder(self):
         """装备保养提醒卡：有「关注/建议更换」装备时才显示。"""
@@ -1223,9 +1259,9 @@ class MainWindow(QMainWindow):
             "训练负荷趋势（CTL · ATL · TSB）",
             show_dates,
             [
-                {"name": "CTL（体能）", "values": ctl_vals, "color": "#1e88e5"},
-                {"name": "ATL（疲劳）", "values": atl_vals, "color": "#e53935"},
-                {"name": "TSB（状态）", "values": tsb_vals, "color": "#43a047"},
+                {"name": "CTL（体能）", "values": ctl_vals, "color": th.series()["ctl"]},
+                {"name": "ATL（疲劳）", "values": atl_vals, "color": th.series()["atl"]},
+                {"name": "TSB（状态）", "values": tsb_vals, "color": th.series()["tsb"]},
             ],
             y_label="", height=280, fmt="%.0f",
         )
@@ -1452,13 +1488,14 @@ class MainWindow(QMainWindow):
             c = self._card()
             c.layout().addWidget(ch.line_chart_cat(
                 "每公里平均速度 (km/h)", cats, [p.get("avg_speed_kmh") or 0 for p in km_data],
-                "#1e88e5", "km/h", 300, "%.1f"))
+                th.series()["speed"], "km/h", 300, "%.1f"))
             self.ov_charts.addWidget(c)
         series = an["series"]
+        s_color = th.series()
         for key, title, color, unit in [
-            ("speed", "速度 (km/h) — 时间", "#e53935", "km/h"),
-            ("hr", "心率 (bpm) — 时间", "#d81b60", "bpm"),
-            ("cad", "踏频 (rpm) — 时间", "#2e7d32", "rpm"),
+            ("speed", "速度 (km/h) — 时间", s_color["speed"], "km/h"),
+            ("hr", "心率 (bpm) — 时间", s_color["hr"], "bpm"),
+            ("cad", "踏频 (rpm) — 时间", s_color["cad"], "rpm"),
         ]:
             pts = series.get(key) or []
             if not pts:
@@ -1495,7 +1532,7 @@ class MainWindow(QMainWindow):
             c.layout().addWidget(ch.line_chart_time(
                 f"设备温度 (°C) · 平均{t['avg']} 最高{t['max']} 最低{t['min']}",
                 [p["t"] for p in t["series"]], [p["v"] for p in t["series"]],
-                "#00acc1", "°C", 260, "%.1f"))
+                s_color["temp"], "°C", 260, "%.1f"))
             self.ov_charts.addWidget(c)
         power_pts = series.get("power") or []
         if power_pts:
@@ -1504,7 +1541,7 @@ class MainWindow(QMainWindow):
             has_native = any(r.get("power") is not None and not r.get("power_estimated") for r in records)
             label = "功率 (W) — 时间" if has_native else "估算功率 (W) — 时间"
             c = self._card()
-            c.layout().addWidget(ch.line_chart_time(label, xs, ys, "#f57c00", "W", 320, "%.0f"))
+            c.layout().addWidget(ch.line_chart_time(label, xs, ys, s_color["power"], "W", 320, "%.0f"))
             self.ov_charts.addWidget(c)
 
         # 功率曲线：各时长最佳平均功率（1/2/5/10/20/30/60 分钟）
@@ -1523,7 +1560,7 @@ class MainWindow(QMainWindow):
                     c = self._card()
                     c.layout().addWidget(ch.line_chart_cat(
                         ("功率曲线" if native else "估算功率曲线") + "（各时长最佳平均 W）",
-                        cats, vals, "#f57c00", "W", 280, "%.0f"))
+                        cats, vals, s_color["power"], "W", 280, "%.0f"))
                     self.ov_charts.addWidget(c)
             except Exception:
                 pass
@@ -1535,7 +1572,7 @@ class MainWindow(QMainWindow):
             c = self._card()
             c.layout().addWidget(ch.bar_chart(
                 "速度区间时长 (秒)", _short_zone_labels(self.config.get("speed_zone_kmh"), "km/h"),
-                [z["seconds"] for z in sz], "#1e88e5", "秒", 300, "%.0f"))
+                [z["seconds"] for z in sz], s_color["speed"], "秒", 300, "%.0f"))
             tip = QLabel(ch.zone_text(sz))
             tip.setObjectName("muted")
             tip.setWordWrap(True)
@@ -1546,7 +1583,7 @@ class MainWindow(QMainWindow):
             c = self._card()
             c.layout().addWidget(ch.bar_chart(
                 "心率区间时长 (秒)", [f"Z{i + 1}" for i in range(len(hz))],
-                [z["seconds"] for z in hz], "#d81b60", "秒", 300, "%.0f"))
+                [z["seconds"] for z in hz], s_color["hr"], "秒", 300, "%.0f"))
             tip = QLabel(ch.zone_text(hz))
             tip.setObjectName("muted")
             tip.setWordWrap(True)
@@ -1582,7 +1619,7 @@ class MainWindow(QMainWindow):
             c = self._card()
             c.layout().addWidget(ch.bar_chart(
                 "踏频区间时长 (秒)", _short_zone_labels(self.config.get("cadence_zone_rpm"), "rpm"),
-                [z["seconds"] for z in cz], "#2e7d32", "秒", 300, "%.0f"))
+                [z["seconds"] for z in cz], s_color["cad"], "秒", 300, "%.0f"))
             tip = QLabel(ch.zone_text(cz))
             tip.setObjectName("muted")
             tip.setWordWrap(True)
@@ -1745,6 +1782,104 @@ class MainWindow(QMainWindow):
             self._tray.notify("📥 自动导入完成",
                               f"从监控目录新增 {r['imported']} 条骑行记录")
 
+    # ---------------- 佳明云同步（P4 路线 A） ----------------
+    def _garmin_download_dir(self) -> Path:
+        """FIT 落地目录：优先复用 P3 监控目录（自动导入零改动接管）。"""
+        d = (self.config.get("auto_import_dir") or "").strip()
+        if d:
+            return Path(d)
+        return self.data_dir / "garmin_sync"
+
+    def sync_garmin(self):
+        """手动触发佳明云同步（菜单/设置页入口）。"""
+        if not (self.config.get("garmin_email") and self.config.get("garmin_password")):
+            QMessageBox.information(self, "提示", "请先在「设置 → 佳明云同步」中填写账号密码")
+            return
+        if getattr(self, "_garmin_busy", False):
+            QMessageBox.information(self, "提示", "佳明同步正在进行中…")
+            return
+        self.garmin_mfa_needed.connect(self._on_garmin_mfa_needed)
+        self._garmin_busy = True
+        self.statusBar().showMessage("佳明云同步：连接中…")
+        self._run_worker(self._do_garmin_sync, self._on_garmin_done)
+
+    def _ask_garmin_mfa(self) -> str:
+        """worker 线程调用：投递信号给主线程弹窗，阻塞等待验证码。"""
+        self._mfa_event = threading.Event()
+        self._mfa_code = None
+        self.garmin_mfa_needed.emit()
+        self._mfa_event.wait(timeout=180)  # 验证码有效窗口内等待
+        return self._mfa_code or ""
+
+    @Slot()
+    def _on_garmin_mfa_needed(self):
+        """主线程：弹出验证码输入框（佳明两步验证 / 邮箱验证码）。"""
+        code, ok = QInputDialog.getText(
+            self, "佳明验证码",
+            "佳明要求两步验证。\n请输入收到的验证码（建议在佳明安全设置中改用邮箱验证码）：")
+        self._mfa_code = code.strip() if ok else ""
+        if self._mfa_event is not None:
+            self._mfa_event.set()
+
+    def _do_garmin_sync(self):
+        from core import garmin_sync
+        return garmin_sync.sync(
+            client_factory=lambda _prompt: garmin_sync.make_client(
+                self.config.get("garmin_email"), self.config.get("garmin_password"),
+                is_cn=bool(self.config.get("garmin_cn")),
+                tokenstore=self.data_dir / "garmin_tokens",
+                prompt_mfa=self._ask_garmin_mfa),
+            download_dir=self._garmin_download_dir(),
+            state_path=garmin_sync.default_state_path(self.data_dir),
+            progress=lambda msg: self.statusBar().showMessage(f"佳明云同步：{msg}"),
+        )
+
+    def _on_garmin_done(self, ok, payload):
+        self._garmin_busy = False
+        if not ok:
+            msg = str(payload)
+            log.warning("佳明云同步失败：%s", msg)
+            self.statusBar().showMessage("佳明云同步失败，详见日志", 5000)
+            hint = msg if len(msg) < 200 else msg[:200] + "…"
+            if "Authentication" in msg or "password" in msg.lower() or "验证" in msg:
+                hint += "\n\n排查建议：确认账号密码与分区（中国区/国际区）正确；" \
+                        "两步验证建议改用「邮箱验证码」（佳明安全设置页）。"
+            QMessageBox.warning(self, "佳明云同步失败", hint)
+            return
+        r = payload
+        if r["errors"]:
+            log.warning("佳明云同步部分失败：%s", r["errors"][:8])
+        self.statusBar().showMessage(
+            f"佳明云同步完成：新增 {r['downloaded']}，云端共 {r['total']} 条", 8000)
+        if not r["files"]:
+            return
+        # 新文件直接导入（走与自动导入相同的解析链），并登记指纹防止 30 秒轮询重复解析
+        from core import auto_import
+        try:
+            for f in r["files"]:
+                p = Path(f)
+                self._auto_seen[str(p)] = (p.stat().st_size, p.stat().st_mtime_ns)
+        except OSError:
+            pass
+        self._garmin_import_busy = True
+        self._run_worker(self._do_import, self._on_garmin_import_done, r["files"])
+
+    def _on_garmin_import_done(self, ok, payload):
+        self._garmin_import_busy = False
+        if not ok:
+            log.warning("佳明下载文件导入失败：%s", payload)
+            self.statusBar().showMessage("佳明文件导入失败，详见日志", 5000)
+            return
+        r = payload
+        if r["imported"] or r["updated"]:
+            self.load_months()
+            self._run_alerts_now()
+        self.statusBar().showMessage(
+            f"佳明同步导入完成：新增 {r['imported']}，更新 {r['updated']}", 8000)
+        if r["imported"] and getattr(self, "_tray", None) is not None:
+            self._tray.notify("☁️ 佳明同步完成",
+                              f"从 Garmin Connect 新增 {r['imported']} 条骑行记录")
+
     # ---------------- AI ----------------
     def _ai_client(self):
         return ai_client.AIClient(
@@ -1867,17 +2002,31 @@ class MainWindow(QMainWindow):
                       self.config.get("auto_import_dir"))
         if auto_before != auto_after:
             self.reset_auto_import()
+        # 主题变更（设置里保存了新的 ui_theme）：立即生效，无需重启
+        if th.current() != (self.config.get("ui_theme") or "dark"):
+            self._reapply_theme()
         # 设置可能改变统计口径/年度目标/功率估算参数 → 强制重建当前视图
         if self.stack.currentWidget() is self.act_page and self.cur_activity is not None:
             self.show_activity(self.cur_activity["id"], force=True)
         elif self._cur_month is not None:
             self.show_month(self._cur_month, force=True)
 
+    def _reapply_theme(self):
+        """按 config 的 ui_theme 重建全局外观（图表色在下方 force 重建视图时生效）。"""
+        th.set_theme(self.config.get("ui_theme") or "dark")
+        app = QApplication.instance()
+        th.apply_palette(app)
+        app.setStyleSheet(th.QSS())
+        if hasattr(self, "ai_panel"):
+            self.ai_panel.apply_theme()
+        self._render_heatmap_legend()
+
     def open_data_dir(self):
-        try:
-            os.startfile(str(self.data_dir))  # noqa: S606  Windows only
-        except Exception as e:
-            log.warning("打开数据目录失败: %s", e)
+        """打开数据目录（QDesktopServices 跨平台：Win 资源管理器 / mac Finder / Linux 文件管理器）。"""
+        from PySide6.QtGui import QDesktopServices
+        from PySide6.QtCore import QUrl
+
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.data_dir)))
 
     def export_gpx(self):
         """导出当前活动为 GPX 文件。"""

@@ -64,6 +64,20 @@ python -m venv .venv
 .\.venv\Scripts\python.exe app.py
 ```
 
+### 跨平台（macOS / Linux）
+代码已做跨平台适配（PySide6 本身跨平台；数据目录、字体、打开文件夹等按系统自适应）：
+
+```bash
+python -m venv .venv
+./.venv/bin/python -m pip install -r requirements.txt
+./.venv/bin/python app.py
+```
+
+- 数据目录：Windows `%APPDATA%/FitAnalyzer`，macOS `~/Library/Application Support/FitAnalyzer`，Linux `~/.local/share/FitAnalyzer`（可用 `--data-dir` 覆盖）。
+- 中文字体按系统回退：微软雅黑 / 苹方 / 思源黑体（Linux 建议安装 `fonts-noto-cjk`）。
+- 平台差异功能：**自更新**与**计划任务推送**目前仅限 Windows 打包版；macOS/Linux 可用 cron/launchd 定时调用 `python app.py --headless-check` 实现离线推送。
+- 推送 GitHub 后 `.github/workflows/ci.yml` 会自动在 Windows / macOS / Linux × Python 3.12/3.13 上跑冒烟测试与离屏 GUI 自检验证。
+
 ## 二、使用
 
 1. 打开软件 → 工具栏「**批量导入 FIT 文件**」，多选码表导出的 `.fit`（可一次性选几百个；重复导入自动更新不重复）。也可以直接把 `.fit` 文件**拖进主窗口**批量导入。
