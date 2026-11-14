@@ -10,8 +10,9 @@
 - --sanitize：**脱敏模式**——不导入任何真实数据，改用内置模拟数据
   （虚构活动名 + 虚构绕圈轨迹），用于公开文档截图，避免泄露真实
   骑行路线/地名等行踪隐私
-- 真实桌面平台渲染：窗口设 WA_DontShowOnScreen（不会真的弹到屏幕上，
-  且中文字体正常，区别于 --selftest 的 offscreen 模式），grab() 截图
+- 真实桌面平台渲染：截图期间窗口会短暂弹在屏幕上（数秒）——QtCharts 的
+  动画/布局必须由真实窗口渲染驱动，offscreen/WA_DontShowOnScreen 模式下
+  图表卡片会渲染成空白；grab() 截图，中文字体正常
 - 每次界面有改动后重跑一遍即可刷新 README 里的截图
 """
 import argparse
@@ -47,9 +48,10 @@ def _fake_activities(db):
 
     sig = training_load.tss_signature({})
     names = [
+        # 日期跨两个月：月度趋势图需要 >=2 个数据点（单点时 QtCharts 退化区间整图不渲染）
         ("示例骑行-城市绿道", "2026-09-10 08:30:00", 50_000, 12.0, 150, 85, 280, 60, 90.0),
         ("示例骑行-环湖路线", "2026-09-14 09:00:00", 32_000, 11.0, 148, 82, 210, 40, 65.0),
-        ("示例骑行-山地训练", "2026-09-18 07:00:00", 26_000, 9.5, 160, 75, 320, 55, 110.0),
+        ("示例骑行-山地训练", "2026-10-18 07:00:00", 26_000, 9.5, 160, 75, 320, 55, 110.0),
     ]
     center_lat, center_lon = 39.9000, 116.4000  # 虚构坐标（不指向任何真实地点）
     for i, (name, start_time, dist_m, avg_ms, avg_hr, avg_cad, cal, ascent, tss) in enumerate(names):
@@ -116,9 +118,11 @@ def main():
     logging_setup.setup_logging(data_dir, console=False)
     app = QApplication(sys.argv[:1])
     app.setStyle("Fusion")
-    from gui.theme import QSS, apply_light_palette
-    apply_light_palette(app)
-    app.setStyleSheet(QSS)
+    # 截图使用默认深色主题（骑行橙）；浅色版可在应用内设置切换
+    from gui import theme
+    theme.set_theme("dark")
+    theme.apply_palette(app)
+    app.setStyleSheet(theme.QSS())
 
     config = Config(data_dir / "config.json")
     db = db_mod.DB(data_dir / "fit.db")
@@ -144,7 +148,10 @@ def main():
     from gui.main_window import MainWindow
 
     win = MainWindow(data_dir, config, db, list_backgrounds())
-    win.setAttribute(Qt.WA_DontShowOnScreen, True)  # 不弹窗，但用真实平台渲染（字体正常）
+    # 说明：QtCharts 的动画与布局需要真实窗口渲染驱动——offscreen/WA_DontShowOnScreen
+    # 模式下图表卡片会是空的；因此截图期间窗口会短暂弹在屏幕上（数秒）。
+    if hasattr(win, "ai_panel"):
+        win.ai_panel.hide()  # AI 浮层是独立窗口，不进截图
     win.resize(1680, 950)  # 宽度足够容纳月度页全部卡片，避免截图出现横向裁切
     win.show()
     _settle(app, 30)
@@ -179,7 +186,7 @@ def main():
     r = route_mod.route_from_records("示例路书", db.get_records(acts[0]["id"]))
     from gui.route_dialog import RouteDialog
     dlg = RouteDialog(win, ai_client_factory=None, ai_enabled=False)
-    dlg.setAttribute(Qt.WA_DontShowOnScreen, True)
+
     dlg.resize(760, 720)
     dlg.show()
     dlg.load_route(r)
@@ -189,7 +196,7 @@ def main():
     # 7) 自动规划路书对话框
     from gui.auto_plan_dialog import AutoPlanDialog
     dlg2 = AutoPlanDialog(config, parent=win)
-    dlg2.setAttribute(Qt.WA_DontShowOnScreen, True)
+
     dlg2.resize(560, 520)
     dlg2.show()
     snap(dlg2, "路径规划，ai自动模式")

@@ -475,11 +475,13 @@ class MainWindow(QMainWindow):
         k = QLabel(key)
         k.setObjectName("statKey")
         sval = str(value)
-        m = re.match(r"^(-?[\d.]+)\s*(.*)$", sval)
+        # 数字与单位之间必须有空格才拆分大数字（"108.0 km" ✓；
+        # "2026-10-18 07:00" 这类日期无空格分隔，整体展示避免拆出 "2026"+"-10-18"）
+        m = re.match(r"^(-?[\d.]+)(?:\s+(\S.*))?$", sval)
         if m and len(m.group(1)) <= 6:
             v = QLabel(m.group(1))
             v.setObjectName("statVal")
-            unit = m.group(2)
+            unit = m.group(2) or ""
             if unit:
                 u = QLabel(unit)
                 u.setObjectName("statUnit")

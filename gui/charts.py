@@ -403,6 +403,22 @@ def _y_axis(label, fmt):
     return _no_title(ax)
 
 
+def _ensure_y_range(ax_y, vals):
+    """单点/常量数据的 Y 轴兜底：min==max 的退化区间会让 QtCharts 整图不渲染。
+
+    （真实场景：新用户只有一个月数据时，月度趋势图只有一个点。）
+    """
+    vals = [v for v in vals if v is not None]
+    if not vals:
+        return ax_y
+    lo, hi = min(vals), max(vals)
+    if hi - lo < 1e-6:
+        hi = lo + 1.0
+    pad = (hi - lo) * 0.15
+    ax_y.setRange(lo - pad, hi + pad)
+    return ax_y
+
+
 def line_chart(title, xs, ys, color=None, y_label="", height=200, fmt="%.0f"):
     """数值 X 轴折线图：粗圆头线 + 曲线下渐变面积。"""
     color = color or _primary()
@@ -417,6 +433,7 @@ def line_chart(title, xs, ys, color=None, y_label="", height=200, fmt="%.0f"):
     chart.addSeries(s)
     ax_x = _x_axis_numeric()
     ax_y = _y_axis(y_label, fmt)
+    _ensure_y_range(ax_y, ys)
     chart.addAxis(ax_x, Qt.AlignBottom)
     chart.addAxis(ax_y, Qt.AlignLeft)
     s.attachAxis(ax_x)
@@ -458,6 +475,7 @@ def line_chart_time(title, xs_sec, ys, color=None, y_label="", height=200, fmt="
         ax_x.append(f"{t // 60}:{t % 60:02d}", float(t))
     ax_x.setRange(0, float(maxv))
     ax_y = _y_axis(y_label, fmt)
+    _ensure_y_range(ax_y, ys)
     chart.addAxis(ax_x, Qt.AlignBottom)
     chart.addAxis(ax_y, Qt.AlignLeft)
     s.attachAxis(ax_x)
@@ -500,6 +518,7 @@ def line_chart_cat(title, categories, values, color=None, y_label="", height=220
         ax_x.append(str(c), float(i))
     ax_x.setRange(0, float(max(len(categories) - 1, 1)))
     ax_y = _y_axis(y_label, fmt)
+    _ensure_y_range(ax_y, values)
     chart.addAxis(ax_x, Qt.AlignBottom)
     chart.addAxis(ax_y, Qt.AlignLeft)
     line.attachAxis(ax_x)
